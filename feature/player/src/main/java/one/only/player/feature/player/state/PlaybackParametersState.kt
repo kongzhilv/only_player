@@ -27,7 +27,9 @@ import one.only.player.feature.player.service.setSkipSilenceEnabled
 fun rememberPlaybackParametersState(player: Player): PlaybackParametersState {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
-    val playbackParametersState = remember { PlaybackParametersState(player, scope, context) }
+    val playbackParametersState = remember(player) {
+        PlaybackParametersState(player, scope, context)
+    }
     LaunchedEffect(player) { playbackParametersState.observe() }
     return playbackParametersState
 }
@@ -102,7 +104,10 @@ class PlaybackParametersState(
     }
 
     private fun currentPlaybackSpeedPreferenceKey(): String? {
-        val mediaId = player.currentMediaItem?.mediaId?.takeIf(String::isNotBlank) ?: return null
+        val mediaId = player.currentMediaItem
+            ?.mediaId
+            ?.takeIf(String::isNotBlank)
+            ?: return null
         return "$PLAYBACK_SPEED_KEY_PREFIX$mediaId"
     }
 
