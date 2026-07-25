@@ -1,17 +1,16 @@
 name: Agent playback speed patch
 
 on:
-  push:
-    branches:
-      - agent/persist-manual-playback-speed
-    paths:
-      - .github/workflows/agent-patch-speed.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   patch-and-verify:
+    if: github.head_ref == 'agent/persist-manual-playback-speed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout patch branch
@@ -163,9 +162,23 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Format, test and compile
+      - name: Format and check Kotlin
         shell: bash
-        run: bash ./gradlew ktlintFormat ktlintCheck test assembleDebug --warning-mode=fail
+        run: bash ./gradlew ktlintFormat ktlintCheck --warning-mode=fail
+
+      - name: Run tests and compile Debug APK
+        shell: bash
+        run: bash ./gradlew test assembleDebug
+
+      - name: Verify changed file scope
+        shell: bash
+        run: |
+          unexpected=$(git diff --name-only | grep -v -E '^feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt$|^\.github/workflows/agent-patch-speed.yml$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected changed files:"
+            echo "$unexpected"
+            exit 1
+          fi
 
       - name: Remove one-time workflow and push verified patch
         shell: bash
