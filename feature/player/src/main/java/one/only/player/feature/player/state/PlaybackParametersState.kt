@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
 import one.only.player.feature.player.service.isSkipSilenceEnabled
 import one.only.player.feature.player.service.setPersistentPlaybackSpeed
 import one.only.player.feature.player.service.setSkipSilenceEnabled
-import one.only.player.feature.player.service.setTransientPlaybackSpeed
 
 @UnstableApi
 @Composable
@@ -45,17 +44,6 @@ class PlaybackParametersState(
             is MediaController -> player.setPersistentPlaybackSpeed(speed)
             else -> player.setPlaybackSpeed(speed)
         }
-    }
-
-    fun previewPlaybackSpeed(speed: Float) {
-        when (player) {
-            is MediaController -> player.setTransientPlaybackSpeed(speed)
-            else -> player.setPlaybackSpeed(speed)
-        }
-    }
-
-    fun commitPreviewedPlaybackSpeed() {
-        setPlaybackSpeed(player.playbackParameters.speed)
     }
 
     fun setIsSkipSilenceEnabled(isEnabled: Boolean) {
