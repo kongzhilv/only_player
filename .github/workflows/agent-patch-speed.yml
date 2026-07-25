@@ -36,128 +36,124 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt")
           text = path.read_text(encoding="utf-8")
 
-          old = '''    private fun resolveTransitionPlaybackSpeed(
-              transitionReason: Int,
-              currentPlaybackSpeed: Float,
-          ): Float = when (transitionReason) {
-              Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-              Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
-              -> currentPlaybackSpeed
+          def replace_once(label: str, pattern: str, replacement: str) -> None:
+              global text
+              text, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+              print(f"{label}: {count}")
+              if count != 1:
+                  raise SystemExit(f"{label} expected exactly one match, got {count}")
 
-              Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-              -> playerPreferences.defaultPlaybackSpeed
+          if "import one.only.player.feature.player.extensions.playbackSpeed\n" not in text:
+              replace_once(
+                  "playbackSpeed import",
+                  r"^import one\.only\.player\.feature\.player\.extensions\.positionMs$",
+                  "import one.only.player.feature.player.extensions.playbackSpeed\n"
+                  "import one.only.player.feature.player.extensions.positionMs",
+              )
 
-              else -> playerPreferences.defaultPlaybackSpeed
-          }
-          '''
-          new = '''    private fun resolveTransitionPlaybackSpeed(
-              transitionReason: Int,
-              currentPlaybackSpeed: Float,
-              storedPlaybackSpeed: Float?,
-          ): Float = when (transitionReason) {
-              Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-              Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
-              -> currentPlaybackSpeed
+          replace_once(
+              "transition resolver",
+              r"""    private fun resolveTransitionPlaybackSpeed\(
+                  transitionReason: Int,
+                  currentPlaybackSpeed: Float,
+              \): Float = when \(transitionReason\) \{
+                  Player\.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                  Player\.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                  -> currentPlaybackSpeed
 
-              Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-              -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+                  Player\.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+                  Player\.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+                  -> playerPreferences\.defaultPlaybackSpeed
 
-              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-              -> playerPreferences.defaultPlaybackSpeed
+                  else -> playerPreferences\.defaultPlaybackSpeed
+              \}""",
+              """    private fun resolveTransitionPlaybackSpeed(
+                  transitionReason: Int,
+                  currentPlaybackSpeed: Float,
+                  storedPlaybackSpeed: Float?,
+              ): Float = when (transitionReason) {
+                  Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                  Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                  -> currentPlaybackSpeed
 
-              else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-          }
-          '''
-          if old not in text:
-              raise SystemExit("resolveTransitionPlaybackSpeed block not found")
-          text = text.replace(old, new, 1)
+                  Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+                  -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
-          old = '''                        resolveTransitionPlaybackSpeed(
-                              transitionReason = reason,
-                              currentPlaybackSpeed = playbackParameters.speed,
-                          ),
-          '''
-          new = '''                        resolveTransitionPlaybackSpeed(
-                              transitionReason = reason,
-                              currentPlaybackSpeed = playbackParameters.speed,
-                              storedPlaybackSpeed = metadata.playbackSpeed,
-                          ),
-          '''
-          if old not in text:
-              raise SystemExit("transition speed call not found")
-          text = text.replace(old, new, 1)
+                  Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+                  -> playerPreferences.defaultPlaybackSpeed
 
-          old = '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
-                      val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
-                      val player = mediaSession?.player
-                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
-                      player.setPlaybackSpeed(playbackSpeed)
-                      return@future SessionResult(SessionResult.RESULT_SUCCESS)
-                  }
-          '''
-          new = '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
-                      val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
-                      val player = mediaSession?.player
-                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
-                      val currentMediaItem = player.currentMediaItem
-                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                  else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+              }""",
+          )
 
-                      player.setPlaybackSpeed(playbackSpeed)
-                      serviceScope.launch {
-                          val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
-                          mediaRepository.updateMediumPlaybackSpeed(
-                              uri = playbackStateUri,
-                              playbackSpeed = playbackSpeed,
-                          )
-                      }
-                      player.replaceMediaItem(
-                          player.currentMediaItemIndex,
-                          currentMediaItem.copy(playbackSpeed = playbackSpeed),
-                      )
-                      return@future SessionResult(SessionResult.RESULT_SUCCESS)
-                  }
-          '''
-          if old not in text:
-              raise SystemExit("persistent speed command block not found")
-          text = text.replace(old, new, 1)
+          replace_once(
+              "transition resolver call",
+              r"""resolveTransitionPlaybackSpeed\(
+                                  transitionReason = reason,
+                                  currentPlaybackSpeed = playbackParameters\.speed,
+                              \)""",
+              """resolveTransitionPlaybackSpeed(
+                                  transitionReason = reason,
+                                  currentPlaybackSpeed = playbackParameters.speed,
+                                  storedPlaybackSpeed = metadata.playbackSpeed,
+                              )""",
+          )
 
-          old = '''                val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
-                  val durationMs = mediaItem.mediaMetadata.durationMs
-          '''
-          new = '''                val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
-                  val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed
-                  val durationMs = mediaItem.mediaMetadata.durationMs
-          '''
-          if old not in text:
-              raise SystemExit("media metadata state block not found")
-          text = text.replace(old, new, 1)
+          replace_once(
+              "persistent command",
+              r"""                CustomCommands\.SET_PERSISTENT_PLAYBACK_SPEED -> \{
+                          val playbackSpeed = args\.getFloat\(CustomCommands\.PLAYBACK_SPEED_KEY\)
+                          val player = mediaSession\?\.player
+                              \?: return@future SessionResult\(SessionError\.ERROR_BAD_VALUE\)
+                          player\.setPlaybackSpeed\(playbackSpeed\)
+                          return@future SessionResult\(SessionResult\.RESULT_SUCCESS\)
+                      \}""",
+              """                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
+                          val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
+                          val player = mediaSession?.player
+                              ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                          val currentMediaItem = player.currentMediaItem
+                              ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
 
-          old = '''                                positionMs = positionMs,
-                                  videoScale = videoScale,
-          '''
-          new = '''                                positionMs = positionMs,
+                          player.setPlaybackSpeed(playbackSpeed)
+                          serviceScope.launch {
+                              val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
+                              mediaRepository.updateMediumPlaybackSpeed(
+                                  uri = playbackStateUri,
                                   playbackSpeed = playbackSpeed,
-                                  videoScale = videoScale,
-          '''
-          if old not in text:
-              raise SystemExit("setExtras position block not found")
-          text = text.replace(old, new, 1)
+                              )
+                          }
+                          player.replaceMediaItem(
+                              player.currentMediaItemIndex,
+                              currentMediaItem.copy(playbackSpeed = playbackSpeed),
+                          )
+                          return@future SessionResult(SessionResult.RESULT_SUCCESS)
+                      }""",
+          )
 
-          old = '''import one.only.player.feature.player.extensions.positionMs
-          import one.only.player.feature.player.extensions.remoteDirectoryPath
-          '''
-          new = '''import one.only.player.feature.player.extensions.playbackSpeed
-          import one.only.player.feature.player.extensions.positionMs
-          import one.only.player.feature.player.extensions.remoteDirectoryPath
-          '''
-          if old not in text:
-              raise SystemExit("playbackSpeed import anchor not found")
-          text = text.replace(old, new, 1)
+          replace_once(
+              "restore speed variable",
+              r"^(\s*)val positionMs = mediaItem\.mediaMetadata\.positionMs \?: videoState\?\.position\n\1val durationMs = mediaItem\.mediaMetadata\.durationMs$",
+              r"\1val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position\n"
+              r"\1val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed\n"
+              r"\1val durationMs = mediaItem.mediaMetadata.durationMs",
+          )
+
+          replace_once(
+              "restore speed metadata",
+              r"""setExtras\(
+                                      positionMs = positionMs,
+                                      videoScale = videoScale,""",
+              """setExtras(
+                                      positionMs = positionMs,
+                                      playbackSpeed = playbackSpeed,
+                                      videoScale = videoScale,""",
+          )
 
           path.write_text(text, encoding="utf-8")
           PY
