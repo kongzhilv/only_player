@@ -298,6 +298,7 @@ class PlayerService : MediaSessionService() {
 
         else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
     }
+
     private fun Player.isEndOfQueuePauseEnabled(preferences: PlayerPreferences = playerPreferences): Boolean = preferences.shouldPauseAtEndOfQueue &&
         repeatMode == Player.REPEAT_MODE_OFF &&
         isCurrentMediaItemLast()
@@ -1470,6 +1471,7 @@ class PlayerService : MediaSessionService() {
                     )
                     return@future SessionResult(SessionResult.RESULT_SUCCESS)
                 }
+
                 CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {
                     val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
                     val player = mediaSession?.player
@@ -1937,6 +1939,7 @@ class PlayerService : MediaSessionService() {
                             setDurationMs(durationMs)
                             setExtras(
                                 positionMs = positionMs,
+                                playbackSpeed = playbackSpeed,
                                 videoScale = videoScale,
                                 audioTrackIndex = audioTrackIndex,
                                 subtitleTrackIndex = subtitleTrackIndex,
