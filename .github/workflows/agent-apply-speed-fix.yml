@@ -37,38 +37,32 @@ jobs:
           from pathlib import Path
 
           path = Path('feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt')
-          text = path.read_text(encoding='utf-8')
+          lines = path.read_text(encoding='utf-8').splitlines()
 
-          if 'storedPlaybackSpeed: Float?' in text and 'mediaRepository.updateMediumPlaybackSpeed(' in text and 'playbackSpeed = playbackSpeed,' in text:
-              print('Playback speed persistence fix is already present.')
-              raise SystemExit(0)
+          def find_stripped(value: str, start: int = 0) -> int:
+              matches = [i for i in range(start, len(lines)) if lines[i].strip() == value]
+              if len(matches) != 1:
+                  raise SystemExit(f'{value!r}: expected one match after {start}, got {len(matches)}')
+              return matches[0]
 
-          replacements = [
-              (
-                  'playbackSpeed import',
-                  '''import one.only.player.feature.player.extensions.localParentPath
-          import one.only.player.feature.player.extensions.positionMs''',
-                  '''import one.only.player.feature.player.extensions.localParentPath
-          import one.only.player.feature.player.extensions.playbackSpeed
-          import one.only.player.feature.player.extensions.positionMs''',
-              ),
-              (
-                  'transition resolver',
-                  '''    private fun resolveTransitionPlaybackSpeed(
-              transitionReason: Int,
-              currentPlaybackSpeed: Float,
-          ): Float = when (transitionReason) {
-              Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-              Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
-              -> currentPlaybackSpeed
+          changed = False
 
-              Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-              -> playerPreferences.defaultPlaybackSpeed
+          import_line = 'import one.only.player.feature.player.extensions.playbackSpeed'
+          if import_line not in lines:
+              idx = find_stripped('import one.only.player.feature.player.extensions.positionMs')
+              lines.insert(idx, import_line)
+              changed = True
 
-              else -> playerPreferences.defaultPlaybackSpeed
-          }''',
-                  '''    private fun resolveTransitionPlaybackSpeed(
+          if not any('storedPlaybackSpeed: Float?' in line for line in lines):
+              start = find_stripped('private fun resolveTransitionPlaybackSpeed(')
+              end_candidates = [
+                  i for i in range(start + 1, len(lines))
+                  if lines[i].strip().startswith('private fun Player.isEndOfQueuePauseEnabled')
+              ]
+              if len(end_candidates) != 1:
+                  raise SystemExit(f'transition resolver end: expected one match, got {len(end_candidates)}')
+              end = end_candidates[0]
+              replacement = '''    private fun resolveTransitionPlaybackSpeed(
               transitionReason: Int,
               currentPlaybackSpeed: Float,
               storedPlaybackSpeed: Float?,
@@ -84,30 +78,29 @@ jobs:
               -> playerPreferences.defaultPlaybackSpeed
 
               else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-          }''',
-              ),
-              (
-                  'transition resolver call',
-                  '''                        resolveTransitionPlaybackSpeed(
-                              transitionReason = reason,
-                              currentPlaybackSpeed = playbackParameters.speed,
-                          ),''',
-                  '''                        resolveTransitionPlaybackSpeed(
-                              transitionReason = reason,
-                              currentPlaybackSpeed = playbackParameters.speed,
-                              storedPlaybackSpeed = metadata.playbackSpeed,
-                          ),''',
-              ),
-              (
-                  'persistent command',
-                  '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
-                      val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
-                      val player = mediaSession?.player
-                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
-                      player.setPlaybackSpeed(playbackSpeed)
-                      return@future SessionResult(SessionResult.RESULT_SUCCESS)
-                  }''',
-                  '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
+          }
+          '''.splitlines()
+              lines[start:end] = replacement
+              changed = True
+
+          if not any('storedPlaybackSpeed = metadata.playbackSpeed,' in line for line in lines):
+              call_candidates = [
+                  i for i, line in enumerate(lines)
+                  if line.strip() == 'currentPlaybackSpeed = playbackParameters.speed,'
+                  and any('resolveTransitionPlaybackSpeed(' in lines[j] for j in range(max(0, i - 4), i))
+              ]
+              if len(call_candidates) != 1:
+                  raise SystemExit(f'transition resolver call: expected one match, got {len(call_candidates)}')
+              idx = call_candidates[0]
+              indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+              lines.insert(idx + 1, indent + 'storedPlaybackSpeed = metadata.playbackSpeed,')
+              changed = True
+
+          persistent_start = find_stripped('CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {')
+          transient_start = find_stripped('CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {', persistent_start + 1)
+          persistent_block = '\n'.join(lines[persistent_start:transient_start])
+          if 'updateMediumPlaybackSpeed' not in persistent_block:
+              replacement = '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
                       val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
                       val player = mediaSession?.player
                           ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
@@ -127,38 +120,41 @@ jobs:
                           currentMediaItem.copy(playbackSpeed = playbackSpeed),
                       )
                       return@future SessionResult(SessionResult.RESULT_SUCCESS)
-                  }''',
-              ),
-              (
-                  'restored speed variable',
-                  '''                val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
-                  val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
-                  val durationMs = mediaItem.mediaMetadata.durationMs''',
-                  '''                val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
-                  val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
-                  val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed
-                  val durationMs = mediaItem.mediaMetadata.durationMs''',
-              ),
-              (
-                  'restored speed metadata',
-                  '''                            setExtras(
-                                  positionMs = positionMs,
-                                  videoScale = videoScale,''',
-                  '''                            setExtras(
-                                  positionMs = positionMs,
-                                  playbackSpeed = playbackSpeed,
-                                  videoScale = videoScale,''',
-              ),
-          ]
+                  }
+          '''.splitlines()
+              lines[persistent_start:transient_start] = replacement
+              changed = True
 
-          for label, old, new in replacements:
-              count = text.count(old)
-              print(f'{label}: {count}')
-              if count != 1:
-                  raise SystemExit(f'{label} expected exactly one match, got {count}')
-              text = text.replace(old, new, 1)
+          if not any('val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed' in line for line in lines):
+              title_idx = find_stripped('val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)')
+              position_candidates = [
+                  i for i in range(title_idx + 1, min(title_idx + 8, len(lines)))
+                  if lines[i].strip() == 'val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position'
+              ]
+              if len(position_candidates) != 1:
+                  raise SystemExit(f'restored speed variable: expected one match, got {len(position_candidates)}')
+              idx = position_candidates[0]
+              indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+              lines.insert(idx + 1, indent + 'val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed')
+              changed = True
 
-          path.write_text(text, encoding='utf-8')
+          if not any(line.strip() == 'playbackSpeed = playbackSpeed,' for line in lines):
+              title_idx = find_stripped('val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)')
+              position_arg_candidates = [
+                  i for i in range(title_idx, len(lines))
+                  if lines[i].strip() == 'positionMs = positionMs,'
+              ]
+              if len(position_arg_candidates) != 1:
+                  raise SystemExit(f'restored speed metadata: expected one match, got {len(position_arg_candidates)}')
+              idx = position_arg_candidates[0]
+              indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+              lines.insert(idx + 1, indent + 'playbackSpeed = playbackSpeed,')
+              changed = True
+
+          if changed:
+              path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          else:
+              print('Source fix already present.')
           PY
 
       - name: Format and verify source
