@@ -1,0 +1,260 @@
+name: 发行前倍速修复与完整验证
+
+run-name: 发行前倍速修复与完整验证 · ${{ github.head_ref || github.ref_name }}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-release:
+    name: 修复、测试并准备 1.0.146
+    if: github.head_ref == 'agent/persist-manual-playback-speed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出修复分支
+        uses: actions/checkout@v6
+        with:
+          ref: agent/persist-manual-playback-speed
+          fetch-depth: 0
+
+      - name: 配置 JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          validate-wrappers: true
+          cache-cleanup: on-success
+
+      - name: 修复全部默认倍速回退路径
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt')
+          text = path.read_text(encoding='utf-8')
+
+          resolver_old = '''        Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+          -> playerPreferences.defaultPlaybackSpeed
+
+          else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+      }
+
+      private fun Player.isEndOfQueuePauseEnabled'''
+          resolver_new = '''        Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+          -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+
+          else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+      }
+
+      private fun Player.persistedPlaybackSpeedOrDefault(): Float =
+          currentMediaItem?.mediaMetadata?.playbackSpeed ?: playerPreferences.defaultPlaybackSpeed
+
+      private fun Player.isEndOfQueuePauseEnabled'''
+          if resolver_old not in text:
+              if 'private fun Player.persistedPlaybackSpeedOrDefault()' not in text:
+                  raise SystemExit('未找到倍速切换解析函数，已停止以避免误改。')
+          else:
+              text = text.replace(resolver_old, resolver_new, 1)
+
+          old_reset = 'player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)'
+          reset_count = text.count(old_reset)
+          if reset_count not in (0, 4):
+              raise SystemExit(f'默认倍速回退语句期望命中 4 次，实际命中 {reset_count} 次。')
+          if reset_count == 4:
+              text = text.replace(
+                  old_reset,
+                  'player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())',
+              )
+
+          path.write_text(text, encoding='utf-8')
+          print('已处理空闲、结束、队列末尾和重复播放的倍速回退。')
+          PY
+
+      - name: 补全远程稳定键的倍速迁移
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('feature/player/src/main/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinator.kt')
+          text = path.read_text(encoding='utf-8')
+          marker = '''        if (primaryVideoState?.audioTrackIndex == null) {
+          '''
+          addition = '''        if (primaryVideoState?.playbackSpeed == null) {
+              fallbackVideoState.playbackSpeed?.let { playbackSpeed ->
+                  mediaRepository.updateMediumPlaybackSpeed(
+                      uri = playbackStateUri,
+                      playbackSpeed = playbackSpeed,
+                  )
+              }
+          }
+          if (primaryVideoState?.audioTrackIndex == null) {
+          '''
+          if 'fallbackVideoState.playbackSpeed?.let' not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit('未唯一定位远程播放状态迁移位置。')
+              text = text.replace(marker, addition, 1)
+          path.write_text(text, encoding='utf-8')
+          print('已补全播放倍速向稳定播放状态键的迁移。')
+          PY
+
+      - name: 增加倍速迁移回归测试
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          fake_path = Path('core/data/src/main/java/one/only/player/core/data/repository/fake/FakeMediaRepository.kt')
+          fake = fake_path.read_text(encoding='utf-8')
+          if 'val updatedPlaybackSpeeds = mutableMapOf<String, Float>()' not in fake:
+              anchor = '    val directories = mutableListOf<Folder>()\n'
+              if fake.count(anchor) != 1:
+                  raise SystemExit('未唯一定位 FakeMediaRepository 状态字段。')
+              fake = fake.replace(
+                  anchor,
+                  anchor + '    val updatedPlaybackSpeeds = mutableMapOf<String, Float>()\n',
+                  1,
+              )
+          empty_method = '''    override suspend fun updateMediumPlaybackSpeed(uri: String, playbackSpeed: Float) {
+              }
+          '''
+          recording_method = '''    override suspend fun updateMediumPlaybackSpeed(uri: String, playbackSpeed: Float) {
+              updatedPlaybackSpeeds[uri] = playbackSpeed
+          }
+          '''
+          if empty_method in fake:
+              fake = fake.replace(empty_method, recording_method, 1)
+          elif 'updatedPlaybackSpeeds[uri] = playbackSpeed' not in fake:
+              raise SystemExit('未找到 FakeMediaRepository 倍速更新方法。')
+          fake_path.write_text(fake, encoding='utf-8')
+
+          test_path = Path('feature/player/src/test/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinatorTest.kt')
+          test = test_path.read_text(encoding='utf-8')
+          if 'import kotlinx.coroutines.runBlocking' not in test:
+              test = test.replace(
+                  'package one.only.player.feature.player.service.playback\n\n',
+                  'package one.only.player.feature.player.service.playback\n\nimport kotlinx.coroutines.runBlocking\n',
+                  1,
+              )
+          if 'migrateFallbackStateToPlaybackStateUri_copiesPlaybackSpeedWhenPrimaryMissing' not in test:
+              anchor = '''    private fun videoState(
+          '''
+              new_test = '''    @Test
+              fun migrateFallbackStateToPlaybackStateUri_copiesPlaybackSpeedWhenPrimaryMissing() = runBlocking {
+                  val repository = FakeMediaRepository()
+                  val coordinator = PlaybackStateCoordinator(repository)
+                  val playbackStateUri = "remote:smb:1:/Movies/Episode.mkv"
+                  val primaryState = videoState(
+                      path = playbackStateUri,
+                      position = null,
+                      audioTrackIndex = null,
+                      subtitleTrackIndex = null,
+                      playbackSpeed = null,
+                      videoScale = 1f,
+                      subtitleDelayMilliseconds = 0L,
+                      subtitleSpeed = 1f,
+                  )
+                  val fallbackState = videoState(
+                      path = "content://media/external/video/media/42",
+                      position = null,
+                      audioTrackIndex = null,
+                      subtitleTrackIndex = null,
+                      playbackSpeed = 1.5f,
+                      videoScale = 1f,
+                      subtitleDelayMilliseconds = 0L,
+                      subtitleSpeed = 1f,
+                  )
+
+                  coordinator.migrateFallbackStateToPlaybackStateUri(
+                      playbackStateUri = playbackStateUri,
+                      primaryVideoState = primaryState,
+                      fallbackVideoState = fallbackState,
+                  )
+
+                  assertEquals(1.5f, repository.updatedPlaybackSpeeds[playbackStateUri] ?: 0f, 0.0001f)
+              }
+
+              private fun videoState(
+          '''
+              if test.count(anchor) != 1:
+                  raise SystemExit('未唯一定位 PlaybackStateCoordinatorTest 辅助函数。')
+              test = test.replace(anchor, new_test, 1)
+          test_path.write_text(test, encoding='utf-8')
+          print('已增加远程稳定键倍速迁移回归测试。')
+          PY
+
+      - name: 更新版本号与发布说明
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle_path = Path('app/build.gradle.kts')
+          gradle = gradle_path.read_text(encoding='utf-8')
+          if 'versionCode = 146' in gradle:
+              gradle = gradle.replace('versionCode = 146', 'versionCode = 147', 1)
+          elif 'versionCode = 147' not in gradle:
+              raise SystemExit('当前 versionCode 不是预期的 146 或 147。')
+          if 'versionName = "1.0.145"' in gradle:
+              gradle = gradle.replace('versionName = "1.0.145"', 'versionName = "1.0.146"', 1)
+          elif 'versionName = "1.0.146"' not in gradle:
+              raise SystemExit('当前 versionName 不是预期的 1.0.145 或 1.0.146。')
+          gradle_path.write_text(gradle, encoding='utf-8')
+
+          changelog = '''- 修复手动设置的播放倍速在播放结束、播放器重新准备或重复播放时回到 1 倍的问题
+          - 普通倍速会保存到当前视频，并在再次打开视频时恢复
+          - 长按临时倍速继续保持独立，不会覆盖已保存的普通倍速
+          - 补全远程视频稳定播放状态键的倍速迁移
+          - 重写中文 README，并补充中文 GitHub Actions 与发布说明
+
+          <details>
+          <summary>English Version</summary>
+
+          - Fix manually selected playback speed reverting to 1x after playback ends, player re-preparation, or repeated playback
+          - Persist normal playback speed per video and restore it when the video is opened again
+          - Keep long-press temporary speed independent from the saved normal speed
+          - Migrate playback speed to stable playback-state keys for remote videos
+          - Rewrite the Chinese README and document GitHub Actions and release usage
+
+          </details>
+          '''
+          Path('.github/CHANGELOG.md').write_text(changelog, encoding='utf-8')
+          print('版本已更新为 1.0.146，更新日志已写入。')
+          PY
+
+      - name: 格式化、测试并编译 Debug APK
+        shell: bash
+        run: |
+          bash ./gradlew ktlintFormat
+          bash ./gradlew ktlintCheck test assembleDebug --warning-mode=fail
+
+      - name: 检查最终修改范围
+        shell: bash
+        run: |
+          allowed='^(app/build.gradle.kts|\.github/CHANGELOG.md|\.github/workflows/agent-finalize-release.yml|core/data/src/main/java/one/only/player/core/data/repository/fake/FakeMediaRepository.kt|feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt|feature/player/src/main/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinator.kt|feature/player/src/test/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinatorTest.kt)$'
+          unexpected=$(git diff --name-only | grep -v -E "$allowed" || true)
+          if [ -n "$unexpected" ]; then
+            echo '发现超出允许范围的修改文件：'
+            echo "$unexpected"
+            exit 1
+          fi
+          echo '最终修改范围检查通过。'
+
+      - name: 清理临时工作流并提交发行候选
+        shell: bash
+        run: |
+          rm .github/workflows/agent-finalize-release.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m '发行：完成 1.0.146 倍速修复与验证'
+          git push origin HEAD:agent/persist-manual-playback-speed
