@@ -1,0 +1,191 @@
+name: Apply playback speed persistence fix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.head_ref == 'agent/persist-manual-playback-speed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/persist-manual-playback-speed
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          validate-wrappers: true
+          cache-cleanup: on-success
+
+      - name: Apply narrowly scoped source fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt')
+          text = path.read_text(encoding='utf-8')
+
+          if 'storedPlaybackSpeed: Float?' in text and 'mediaRepository.updateMediumPlaybackSpeed(' in text and 'playbackSpeed = playbackSpeed,' in text:
+              print('Playback speed persistence fix is already present.')
+              raise SystemExit(0)
+
+          replacements = [
+              (
+                  'playbackSpeed import',
+                  '''import one.only.player.feature.player.extensions.localParentPath
+          import one.only.player.feature.player.extensions.positionMs''',
+                  '''import one.only.player.feature.player.extensions.localParentPath
+          import one.only.player.feature.player.extensions.playbackSpeed
+          import one.only.player.feature.player.extensions.positionMs''',
+              ),
+              (
+                  'transition resolver',
+                  '''    private fun resolveTransitionPlaybackSpeed(
+              transitionReason: Int,
+              currentPlaybackSpeed: Float,
+          ): Float = when (transitionReason) {
+              Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+              Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+              -> currentPlaybackSpeed
+
+              Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+              -> playerPreferences.defaultPlaybackSpeed
+
+              else -> playerPreferences.defaultPlaybackSpeed
+          }''',
+                  '''    private fun resolveTransitionPlaybackSpeed(
+              transitionReason: Int,
+              currentPlaybackSpeed: Float,
+              storedPlaybackSpeed: Float?,
+          ): Float = when (transitionReason) {
+              Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+              Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+              -> currentPlaybackSpeed
+
+              Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+              -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+
+              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+              -> playerPreferences.defaultPlaybackSpeed
+
+              else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+          }''',
+              ),
+              (
+                  'transition resolver call',
+                  '''                        resolveTransitionPlaybackSpeed(
+                              transitionReason = reason,
+                              currentPlaybackSpeed = playbackParameters.speed,
+                          ),''',
+                  '''                        resolveTransitionPlaybackSpeed(
+                              transitionReason = reason,
+                              currentPlaybackSpeed = playbackParameters.speed,
+                              storedPlaybackSpeed = metadata.playbackSpeed,
+                          ),''',
+              ),
+              (
+                  'persistent command',
+                  '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
+                      val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
+                      val player = mediaSession?.player
+                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                      player.setPlaybackSpeed(playbackSpeed)
+                      return@future SessionResult(SessionResult.RESULT_SUCCESS)
+                  }''',
+                  '''                CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {
+                      val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
+                      val player = mediaSession?.player
+                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                      val currentMediaItem = player.currentMediaItem
+                          ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+
+                      player.setPlaybackSpeed(playbackSpeed)
+                      serviceScope.launch {
+                          val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
+                          mediaRepository.updateMediumPlaybackSpeed(
+                              uri = playbackStateUri,
+                              playbackSpeed = playbackSpeed,
+                          )
+                      }
+                      player.replaceMediaItem(
+                          player.currentMediaItemIndex,
+                          currentMediaItem.copy(playbackSpeed = playbackSpeed),
+                      )
+                      return@future SessionResult(SessionResult.RESULT_SUCCESS)
+                  }''',
+              ),
+              (
+                  'restored speed variable',
+                  '''                val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
+                  val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
+                  val durationMs = mediaItem.mediaMetadata.durationMs''',
+                  '''                val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
+                  val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
+                  val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed
+                  val durationMs = mediaItem.mediaMetadata.durationMs''',
+              ),
+              (
+                  'restored speed metadata',
+                  '''                            setExtras(
+                                  positionMs = positionMs,
+                                  videoScale = videoScale,''',
+                  '''                            setExtras(
+                                  positionMs = positionMs,
+                                  playbackSpeed = playbackSpeed,
+                                  videoScale = videoScale,''',
+              ),
+          ]
+
+          for label, old, new in replacements:
+              count = text.count(old)
+              print(f'{label}: {count}')
+              if count != 1:
+                  raise SystemExit(f'{label} expected exactly one match, got {count}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Format and verify source
+        shell: bash
+        run: |
+          bash ./gradlew ktlintFormat
+          bash ./gradlew ktlintCheck test assembleDebug
+
+      - name: Verify changed scope
+        shell: bash
+        run: |
+          unexpected=$(git diff --name-only | grep -v '^feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt$' || true)
+          if [ -n "$unexpected" ]; then
+            echo 'Unexpected changed files:'
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Commit verified source fix
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt
+          git commit -m 'fix: persist and restore manual playback speed'
+          git push origin HEAD:agent/persist-manual-playback-speed
