@@ -1,4 +1,6 @@
-name: Apply playback speed persistence fix
+name: 倍速持久化修复验证
+
+run-name: 倍速持久化修复验证 · ${{ github.head_ref || github.ref_name }}
 
 on:
   pull_request:
@@ -9,28 +11,29 @@ permissions:
 
 jobs:
   apply-and-verify:
+    name: 应用修复并完成验证
     if: github.head_ref == 'agent/persist-manual-playback-speed'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout patch branch
+      - name: 检出修复分支
         uses: actions/checkout@v6
         with:
           ref: agent/persist-manual-playback-speed
           fetch-depth: 0
 
-      - name: Set up JDK 25
+      - name: 配置 JDK 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Gradle
+      - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
           validate-wrappers: true
           cache-cleanup: on-success
 
-      - name: Complete narrowly scoped source fix
+      - name: 完成限定范围内的源码修复
         shell: bash
         run: |
           python3 - <<'PY'
@@ -45,7 +48,7 @@ jobs:
               if line.strip() == 'val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed'
           ]
           if len(speed_var_matches) != 1:
-              raise SystemExit(f'playback speed variable: expected one match, got {len(speed_var_matches)}')
+              raise SystemExit(f'播放速度恢复变量：期望命中 1 次，实际命中 {len(speed_var_matches)} 次')
 
           speed_var_index = speed_var_matches[0]
           position_arg_matches = [
@@ -53,7 +56,7 @@ jobs:
               if lines[i].strip() == 'positionMs = positionMs,'
           ]
           if len(position_arg_matches) != 1:
-              raise SystemExit(f'position metadata argument: expected one match after speed variable, got {len(position_arg_matches)}')
+              raise SystemExit(f'播放位置元数据参数：期望命中 1 次，实际命中 {len(position_arg_matches)} 次')
 
           position_arg_index = position_arg_matches[0]
           nearby = [line.strip() for line in lines[position_arg_index + 1:position_arg_index + 5]]
@@ -67,7 +70,7 @@ jobs:
               if line.strip().startswith('private fun Player.isEndOfQueuePauseEnabled')
           ]
           if len(end_of_resolver_matches) != 1:
-              raise SystemExit(f'end-of-queue function: expected one match, got {len(end_of_resolver_matches)}')
+              raise SystemExit(f'队列结束判断函数：期望命中 1 次，实际命中 {len(end_of_resolver_matches)} 次')
           end_of_resolver_index = end_of_resolver_matches[0]
           if end_of_resolver_index > 0 and lines[end_of_resolver_index - 1].strip() != '':
               lines.insert(end_of_resolver_index, '')
@@ -78,7 +81,7 @@ jobs:
               if line.strip() == 'CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {'
           ]
           if len(transient_matches) != 1:
-              raise SystemExit(f'transient speed command: expected one match, got {len(transient_matches)}')
+              raise SystemExit(f'临时倍速命令：期望命中 1 次，实际命中 {len(transient_matches)} 次')
           transient_index = transient_matches[0]
           if transient_index > 0 and lines[transient_index - 1].strip() != '':
               lines.insert(transient_index, '')
@@ -86,35 +89,37 @@ jobs:
 
           if changed:
               path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+              print('已补全倍速持久化恢复代码。')
           else:
-              print('Final source fix already present.')
+              print('源码修复已存在，无需再次修改。')
           PY
 
-      - name: Format and verify source
+      - name: 格式化并验证源码
         shell: bash
         run: |
           bash ./gradlew ktlintFormat
           bash ./gradlew ktlintCheck test assembleDebug
 
-      - name: Verify changed scope
+      - name: 检查修改文件范围
         shell: bash
         run: |
           unexpected=$(git diff --name-only | grep -v '^feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt$' || true)
           if [ -n "$unexpected" ]; then
-            echo 'Unexpected changed files:'
+            echo '发现超出允许范围的修改文件：'
             echo "$unexpected"
             exit 1
           fi
+          echo '修改范围检查通过。'
 
-      - name: Commit verified source fix
+      - name: 提交已验证的源码修复
         shell: bash
         run: |
           if git diff --quiet; then
-            echo 'No source changes to commit.'
+            echo '没有新的源码修改需要提交。'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt
-          git commit -m 'fix: restore persisted speed into media metadata'
+          git commit -m '修复：恢复已保存的播放倍速'
           git push origin HEAD:agent/persist-manual-playback-speed
