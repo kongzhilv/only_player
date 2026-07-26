@@ -115,6 +115,7 @@ import one.only.player.feature.player.extensions.isAtEndOfCurrentMediaItem
 import one.only.player.feature.player.extensions.isCurrentMediaItemLast
 import one.only.player.feature.player.extensions.isVideoEffectsAvailable
 import one.only.player.feature.player.extensions.localParentPath
+import one.only.player.feature.player.extensions.playbackSpeed
 import one.only.player.feature.player.extensions.positionMs
 import one.only.player.feature.player.extensions.remoteDirectoryPath
 import one.only.player.feature.player.extensions.remoteFilePath
@@ -283,18 +284,20 @@ class PlayerService : MediaSessionService() {
     private fun resolveTransitionPlaybackSpeed(
         transitionReason: Int,
         currentPlaybackSpeed: Float,
+        storedPlaybackSpeed: Float?,
     ): Float = when (transitionReason) {
         Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
         Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
         -> currentPlaybackSpeed
 
         Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+
         Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
         -> playerPreferences.defaultPlaybackSpeed
 
-        else -> playerPreferences.defaultPlaybackSpeed
+        else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
     }
-
     private fun Player.isEndOfQueuePauseEnabled(preferences: PlayerPreferences = playerPreferences): Boolean = preferences.shouldPauseAtEndOfQueue &&
         repeatMode == Player.REPEAT_MODE_OFF &&
         isCurrentMediaItemLast()
@@ -353,6 +356,7 @@ class PlayerService : MediaSessionService() {
                         resolveTransitionPlaybackSpeed(
                             transitionReason = reason,
                             currentPlaybackSpeed = playbackParameters.speed,
+                            storedPlaybackSpeed = metadata.playbackSpeed,
                         ),
                     )
                     playerSpecificSubtitleDelayMilliseconds = metadata.subtitleDelayMilliseconds ?: 0L
@@ -1449,10 +1453,23 @@ class PlayerService : MediaSessionService() {
                     val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
                     val player = mediaSession?.player
                         ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                    val currentMediaItem = player.currentMediaItem
+                        ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+
                     player.setPlaybackSpeed(playbackSpeed)
+                    serviceScope.launch {
+                        val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
+                        mediaRepository.updateMediumPlaybackSpeed(
+                            uri = playbackStateUri,
+                            playbackSpeed = playbackSpeed,
+                        )
+                    }
+                    player.replaceMediaItem(
+                        player.currentMediaItemIndex,
+                        currentMediaItem.copy(playbackSpeed = playbackSpeed),
+                    )
                     return@future SessionResult(SessionResult.RESULT_SUCCESS)
                 }
-
                 CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {
                     val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
                     val player = mediaSession?.player
@@ -1847,6 +1864,7 @@ class PlayerService : MediaSessionService() {
 
                 val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
                 val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
+                val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed
                 val durationMs = mediaItem.mediaMetadata.durationMs
                     ?: video?.duration?.takeIf { it > 0L }
                     ?: extractDurationMs(uri)
