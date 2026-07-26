@@ -3,6 +3,9 @@ name: 发行前倍速修复与完整验证
 run-name: 发行前倍速修复与完整验证 · ${{ github.head_ref || github.ref_name }}
 
 on:
+  push:
+    branches:
+      - agent/persist-manual-playback-speed
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -12,7 +15,7 @@ permissions:
 jobs:
   finalize-release:
     name: 修复、测试并准备 1.0.146
-    if: github.head_ref == 'agent/persist-manual-playback-speed'
+    if: (github.event_name == 'push' && github.ref_name == 'agent/persist-manual-playback-speed') || github.head_ref == 'agent/persist-manual-playback-speed'
     runs-on: ubuntu-latest
     steps:
       - name: 检出修复分支
