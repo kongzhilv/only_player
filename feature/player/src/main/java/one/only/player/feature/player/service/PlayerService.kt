@@ -115,6 +115,7 @@ import one.only.player.feature.player.extensions.isAtEndOfCurrentMediaItem
 import one.only.player.feature.player.extensions.isCurrentMediaItemLast
 import one.only.player.feature.player.extensions.isVideoEffectsAvailable
 import one.only.player.feature.player.extensions.localParentPath
+import one.only.player.feature.player.extensions.playbackSpeed
 import one.only.player.feature.player.extensions.positionMs
 import one.only.player.feature.player.extensions.remoteDirectoryPath
 import one.only.player.feature.player.extensions.remoteFilePath
@@ -283,17 +284,22 @@ class PlayerService : MediaSessionService() {
     private fun resolveTransitionPlaybackSpeed(
         transitionReason: Int,
         currentPlaybackSpeed: Float,
+        storedPlaybackSpeed: Float?,
     ): Float = when (transitionReason) {
         Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
         Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
         -> currentPlaybackSpeed
 
         Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-        Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-        -> playerPreferences.defaultPlaybackSpeed
+        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
-        else -> playerPreferences.defaultPlaybackSpeed
+        Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+
+        else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
     }
+
+    private fun Player.persistedPlaybackSpeedOrDefault(): Float = currentMediaItem?.mediaMetadata?.playbackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
     private fun Player.isEndOfQueuePauseEnabled(preferences: PlayerPreferences = playerPreferences): Boolean = preferences.shouldPauseAtEndOfQueue &&
         repeatMode == Player.REPEAT_MODE_OFF &&
@@ -353,6 +359,7 @@ class PlayerService : MediaSessionService() {
                         resolveTransitionPlaybackSpeed(
                             transitionReason = reason,
                             currentPlaybackSpeed = playbackParameters.speed,
+                            storedPlaybackSpeed = metadata.playbackSpeed,
                         ),
                     )
                     playerSpecificSubtitleDelayMilliseconds = metadata.subtitleDelayMilliseconds ?: 0L
@@ -595,13 +602,13 @@ class PlayerService : MediaSessionService() {
             if (playbackState == Player.STATE_IDLE) {
                 val player = mediaSession?.player ?: return
                 player.trackSelectionParameters = TrackSelectionParameters.DEFAULT
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 return
             }
 
             if (playbackState == Player.STATE_ENDED) {
                 val player = mediaSession?.player ?: return
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 if (player.isEndOfQueuePauseEnabled()) {
                     hasPausedAtEndOfQueue = true
                     player.pause()
@@ -644,7 +651,7 @@ class PlayerService : MediaSessionService() {
             val player = mediaSession?.player ?: return
             if (player.isEndOfQueuePauseEnabled()) {
                 hasPausedAtEndOfQueue = true
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 player.updatePauseAtEndOfMediaItems()
                 return
             }
@@ -1290,7 +1297,7 @@ class PlayerService : MediaSessionService() {
 
     private fun handleRepeatedPlayback(player: Player) {
         player.currentMediaItem?.mediaMetadata?.let { metadata ->
-            player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+            player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
             player.playerSpecificSubtitleDelayMilliseconds = metadata.subtitleDelayMilliseconds ?: 0L
             player.playerSpecificSubtitleSpeed = metadata.subtitleSpeed ?: 1f
         }
@@ -1449,7 +1456,21 @@ class PlayerService : MediaSessionService() {
                     val playbackSpeed = args.getFloat(CustomCommands.PLAYBACK_SPEED_KEY)
                     val player = mediaSession?.player
                         ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                    val currentMediaItem = player.currentMediaItem
+                        ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+
                     player.setPlaybackSpeed(playbackSpeed)
+                    serviceScope.launch {
+                        val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
+                        mediaRepository.updateMediumPlaybackSpeed(
+                            uri = playbackStateUri,
+                            playbackSpeed = playbackSpeed,
+                        )
+                    }
+                    player.replaceMediaItem(
+                        player.currentMediaItemIndex,
+                        currentMediaItem.copy(playbackSpeed = playbackSpeed),
+                    )
                     return@future SessionResult(SessionResult.RESULT_SUCCESS)
                 }
 
@@ -1847,6 +1868,7 @@ class PlayerService : MediaSessionService() {
 
                 val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
                 val positionMs = mediaItem.mediaMetadata.positionMs ?: videoState?.position
+                val playbackSpeed = mediaItem.mediaMetadata.playbackSpeed ?: videoState?.playbackSpeed
                 val durationMs = mediaItem.mediaMetadata.durationMs
                     ?: video?.duration?.takeIf { it > 0L }
                     ?: extractDurationMs(uri)
@@ -1919,6 +1941,7 @@ class PlayerService : MediaSessionService() {
                             setDurationMs(durationMs)
                             setExtras(
                                 positionMs = positionMs,
+                                playbackSpeed = playbackSpeed,
                                 videoScale = videoScale,
                                 audioTrackIndex = audioTrackIndex,
                                 subtitleTrackIndex = subtitleTrackIndex,

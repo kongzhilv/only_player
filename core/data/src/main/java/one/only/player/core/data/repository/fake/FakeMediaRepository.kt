@@ -16,6 +16,7 @@ class FakeMediaRepository : MediaRepository {
 
     val videos = mutableListOf<Video>()
     val directories = mutableListOf<Folder>()
+    val updatedPlaybackSpeeds = mutableMapOf<String, Float>()
     private val recycleBinUris = mutableSetOf<String>()
     private val originalPaths = mutableMapOf<String, String>()
 
@@ -69,6 +70,7 @@ class FakeMediaRepository : MediaRepository {
     }
 
     override suspend fun updateMediumPlaybackSpeed(uri: String, playbackSpeed: Float) {
+        updatedPlaybackSpeeds[uri] = playbackSpeed
     }
 
     override suspend fun updateMediumAudioTrack(uri: String, audioTrackIndex: Int) {
