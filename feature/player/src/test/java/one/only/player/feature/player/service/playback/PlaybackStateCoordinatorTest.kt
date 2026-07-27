@@ -1,5 +1,6 @@
 package one.only.player.feature.player.service.playback
 
+import kotlinx.coroutines.runBlocking
 import one.only.player.core.data.models.VideoState
 import one.only.player.core.data.repository.fake.FakeMediaRepository
 import org.junit.Assert.assertEquals
@@ -40,6 +41,41 @@ class PlaybackStateCoordinatorTest {
         assertEquals(1.4f, mergedState.videoScale, 0.0001f)
         assertEquals(250L, mergedState.subtitleDelayMilliseconds)
         assertEquals(0.9f, mergedState.subtitleSpeed, 0.0001f)
+    }
+
+    @Test
+    fun migrateFallbackStateToPlaybackStateUri_copiesPlaybackSpeedWhenPrimaryMissing() = runBlocking {
+        val repository = FakeMediaRepository()
+        val coordinator = PlaybackStateCoordinator(repository)
+        val playbackStateUri = "remote:smb:1:/Movies/Episode.mkv"
+        val primaryState = videoState(
+            path = playbackStateUri,
+            position = null,
+            audioTrackIndex = null,
+            subtitleTrackIndex = null,
+            playbackSpeed = null,
+            videoScale = 1f,
+            subtitleDelayMilliseconds = 0L,
+            subtitleSpeed = 1f,
+        )
+        val fallbackState = videoState(
+            path = "content://media/external/video/media/42",
+            position = null,
+            audioTrackIndex = null,
+            subtitleTrackIndex = null,
+            playbackSpeed = 1.5f,
+            videoScale = 1f,
+            subtitleDelayMilliseconds = 0L,
+            subtitleSpeed = 1f,
+        )
+
+        coordinator.migrateFallbackStateToPlaybackStateUri(
+            playbackStateUri = playbackStateUri,
+            primaryVideoState = primaryState,
+            fallbackVideoState = fallbackState,
+        )
+
+        assertEquals(1.5f, repository.updatedPlaybackSpeeds[playbackStateUri] ?: 0f, 0.0001f)
     }
 
     private fun videoState(

@@ -294,10 +294,12 @@ class PlayerService : MediaSessionService() {
         -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
         Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-        -> playerPreferences.defaultPlaybackSpeed
+        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
         else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
     }
+
+    private fun Player.persistedPlaybackSpeedOrDefault(): Float = currentMediaItem?.mediaMetadata?.playbackSpeed ?: playerPreferences.defaultPlaybackSpeed
 
     private fun Player.isEndOfQueuePauseEnabled(preferences: PlayerPreferences = playerPreferences): Boolean = preferences.shouldPauseAtEndOfQueue &&
         repeatMode == Player.REPEAT_MODE_OFF &&
@@ -600,13 +602,13 @@ class PlayerService : MediaSessionService() {
             if (playbackState == Player.STATE_IDLE) {
                 val player = mediaSession?.player ?: return
                 player.trackSelectionParameters = TrackSelectionParameters.DEFAULT
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 return
             }
 
             if (playbackState == Player.STATE_ENDED) {
                 val player = mediaSession?.player ?: return
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 if (player.isEndOfQueuePauseEnabled()) {
                     hasPausedAtEndOfQueue = true
                     player.pause()
@@ -649,7 +651,7 @@ class PlayerService : MediaSessionService() {
             val player = mediaSession?.player ?: return
             if (player.isEndOfQueuePauseEnabled()) {
                 hasPausedAtEndOfQueue = true
-                player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+                player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
                 player.updatePauseAtEndOfMediaItems()
                 return
             }
@@ -1295,7 +1297,7 @@ class PlayerService : MediaSessionService() {
 
     private fun handleRepeatedPlayback(player: Player) {
         player.currentMediaItem?.mediaMetadata?.let { metadata ->
-            player.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
+            player.setPlaybackSpeed(player.persistedPlaybackSpeedOrDefault())
             player.playerSpecificSubtitleDelayMilliseconds = metadata.subtitleDelayMilliseconds ?: 0L
             player.playerSpecificSubtitleSpeed = metadata.subtitleSpeed ?: 1f
         }

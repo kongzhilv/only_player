@@ -47,6 +47,14 @@ internal class PlaybackStateCoordinator(
                 )
             }
         }
+        if (primaryVideoState?.playbackSpeed == null) {
+            fallbackVideoState.playbackSpeed?.let { playbackSpeed ->
+                mediaRepository.updateMediumPlaybackSpeed(
+                    uri = playbackStateUri,
+                    playbackSpeed = playbackSpeed,
+                )
+            }
+        }
         if (primaryVideoState?.audioTrackIndex == null) {
             fallbackVideoState.audioTrackIndex?.let { audioTrackIndex ->
                 mediaRepository.updateMediumAudioTrack(
