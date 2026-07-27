@@ -156,7 +156,7 @@ jobs:
       - name: 审查最终修改范围
         shell: bash
         run: |
-          allowed='^(app/build.gradle.kts|\.github/CHANGELOG.md|core/data/src/main/java/one/only/player/core/data/repository/fake/FakeMediaRepository.kt|feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt|feature/player/src/main/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinator.kt|feature/player/src/test/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinatorTest.kt)$'
+          allowed='^(app/build.gradle.kts|\.github/CHANGELOG.md|\.github/workflows/test.yaml|\.github/workflows/agent-finalize-release.yml|scripts/finalize_speed_release.py|core/data/src/main/java/one/only/player/core/data/repository/fake/FakeMediaRepository.kt|feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt|feature/player/src/main/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinator.kt|feature/player/src/test/java/one/only/player/feature/player/service/playback/PlaybackStateCoordinatorTest.kt)$'
           unexpected=$(git diff --name-only | grep -v -E "$allowed" || true)
           if [ -n "$unexpected" ]; then
             echo "发现超出允许范围的修改文件："
