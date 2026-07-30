@@ -1,20 +1,14 @@
-- 修复手动设置的播放倍速在播放结束、播放器重新准备或重复播放时回到 1 倍的问题
-- 普通倍速会保存到当前视频，并在再次打开视频时恢复
-- 长按临时倍速继续保持独立，不会覆盖已保存的普通倍速
-- 补全远程视频稳定播放状态键的倍速迁移
-- 使用独立应用 ID `io.github.kongzhilv.onlyplayer`，可与原版同时安装
-- 更新检查改为读取 `kongzhilv/only_player` 的正式 Release
-- 使用本 fork 的独立签名构建，不支持直接覆盖原作者签名版本
+- 修复平板横屏、分屏或较矮窗口中“快捷设置”弹窗底部“取消/确定”按钮被裁掉的问题
+- 限制弹窗整体高度，标题和操作按钮保持可见，中间选项区域在空间不足时滚动
+- 修复同时适用于使用共享 `NextDialog` 的其他长内容弹窗
+- 继续使用独立应用 ID `io.github.kongzhilv.onlyplayer` 和现有长期签名，可从当前长期签名版覆盖升级
 
 <details>
 <summary>English Version</summary>
 
-- Fix manually selected playback speed reverting to 1x after playback ends, player re-preparation, or repeated playback
-- Persist normal playback speed per video and restore it when the video is opened again
-- Keep long-press temporary speed independent from the saved normal speed
-- Migrate playback speed to stable playback-state keys for remote videos
-- Use the independent application ID `io.github.kongzhilv.onlyplayer`, allowing side-by-side installation with the upstream app
-- Check updates from releases in `kongzhilv/only_player`
-- Build with an independent fork signature; it does not replace an upstream-signed installation
+- Fix the Quick Settings dialog clipping its Cancel and Done buttons on tablets in landscape, split-screen, or other short-height windows
+- Constrain the whole dialog to the current window height, keep the title and action buttons visible, and scroll the middle content when space is limited
+- Apply the same protection to other long dialogs built with the shared `NextDialog`
+- Continue using the independent application ID `io.github.kongzhilv.onlyplayer` and the existing long-term signing key for in-place upgrades from the current long-term-signed release
 
 </details>
