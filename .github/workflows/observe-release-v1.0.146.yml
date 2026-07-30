@@ -1,0 +1,123 @@
+name: 跟踪并核验 v1.0.146 正式发布
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/observe-release-v1.0.146.yml'
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+
+jobs:
+  observe:
+    name: 触发、跟踪并核验 Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查已有 Release
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if gh release view v1.0.146 --repo "$GITHUB_REPOSITORY" --json assets,url > /tmp/existing.json 2>/dev/null; then
+            arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' /tmp/existing.json)
+            x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' /tmp/existing.json)
+            sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/existing.json)
+            if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ] && [ "$sums" -gt 0 ]; then
+              echo 'complete=true' >> "$GITHUB_OUTPUT"
+              cat /tmp/existing.json
+              exit 0
+            fi
+          fi
+          echo 'complete=false' >> "$GITHUB_OUTPUT"
+
+      - name: 触发正式发布
+        id: dispatch
+        if: steps.existing.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yaml/dispatches" \
+            -f ref='main' \
+            -F 'inputs[version]=1.0.146' \
+            -F 'inputs[create_release]=true'
+
+      - name: 获取发布运行 ID
+        id: run
+        if: steps.existing.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          started_at='${{ steps.dispatch.outputs.started_at }}'
+          run_id=''
+          for attempt in $(seq 1 30); do
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yaml/runs?event=workflow_dispatch&branch=main&per_page=20")
+            run_id=$(printf '%s' "$data" | jq -r --arg started "$started_at" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | last | .id // empty')
+            run_url=$(printf '%s' "$data" | jq -r --arg started "$started_at" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | last | .html_url // empty')
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo '::error::未取得正式发布运行 ID'
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          echo "正式发布运行：$run_url"
+
+      - name: 等待正式发布完成
+        id: wait
+        if: steps.existing.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id='${{ steps.run.outputs.run_id }}'
+          conclusion=''
+          for attempt in $(seq 1 90); do
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+            status=$(printf '%s' "$data" | jq -r '.status')
+            conclusion=$(printf '%s' "$data" | jq -r '.conclusion // empty')
+            echo "第 $attempt 次检查：$status ${conclusion:-运行中}"
+            if [ "$status" = 'completed' ]; then
+              break
+            fi
+            sleep 20
+          done
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+          if [ "$conclusion" != 'success' ]; then
+            gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed || true
+            exit 1
+          fi
+
+      - name: 核验 Release 资产
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if gh release view v1.0.146 --repo "$GITHUB_REPOSITORY" --json tagName,url,assets > /tmp/release.json 2>/dev/null; then
+              arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/release.json)
+              x64=$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/release.json)
+              sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/release.json)
+              fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/release.json)
+              certificate=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/release.json)
+              if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ] && [ "$sums" -gt 0 ] && [ "$fingerprint" -gt 0 ] && [ "$certificate" -gt 0 ]; then
+                cat /tmp/release.json
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo '::error::Release 或资产不完整'
+          exit 1
