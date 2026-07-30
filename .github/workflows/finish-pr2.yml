@@ -3,9 +3,9 @@ name: PR #2 倍速修复最终收尾
 run-name: PR #2 倍速修复最终收尾
 
 on:
-  push:
-    branches:
-      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,6 +17,7 @@ concurrency:
 jobs:
   finish:
     name: 修正代码、完整验证并更新 PR
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/finalize-speed-release'
     runs-on: ubuntu-latest
     steps:
       - name: 检出 PR 修复分支
