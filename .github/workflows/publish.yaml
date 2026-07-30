@@ -210,13 +210,13 @@ jobs:
 
           ## 构建信息
 
-          - 应用 ID：`io.github.kongzhilv.onlyplayer`
-          - versionName：`${{ steps.release.outputs.version }}`
-          - versionCode：`${{ steps.release.outputs.version_code }}`
-          - 签名证书 SHA-256：`${certificate_sha256}`
-          - 架构：`arm64-v8a`、`x86_64`
+          - 应用 ID：io.github.kongzhilv.onlyplayer
+          - versionName：${{ steps.release.outputs.version }}
+          - versionCode：${{ steps.release.outputs.version_code }}
+          - 签名证书 SHA-256：${certificate_sha256}
+          - 架构：arm64-v8a、x86_64
 
-          此版本使用独立应用 ID 和独立签名，可与原作者版本同时安装；它不会覆盖原作者签名的 `one.only.player`。
+          此版本使用独立应用 ID 和独立签名，可与原作者版本同时安装；它不会覆盖原作者签名的 one.only.player。
           EOF
 
       - name: 创建 GitHub Release
