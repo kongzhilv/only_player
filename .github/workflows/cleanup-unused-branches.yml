@@ -1,0 +1,96 @@
+name: 清理无用分支
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/cleanup-unused-branches.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    name: 删除已关闭的一次性 agent 分支
+    runs-on: ubuntu-latest
+    steps:
+      - name: 清理并核验分支
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+          owner="${repo%%/*}"
+          default_branch=$(gh api "repos/${repo}" --jq '.default_branch')
+          cleanup_branch="$GITHUB_HEAD_REF"
+
+          mapfile -t branches < <(
+            gh api --paginate "repos/${repo}/branches?per_page=100" --jq '.[].name'
+          )
+          mapfile -t open_heads < <(
+            gh api --paginate "repos/${repo}/pulls?state=open&per_page=100" \
+              --jq ".[] | select(.head.repo.full_name == \"${repo}\") | .head.ref"
+          )
+
+          printf '%s\n' "默认分支：${default_branch}" "清理分支：${cleanup_branch}"
+          printf '清理前分支：\n- %s\n' "${branches[@]}"
+
+          deleted=()
+          preserved=()
+
+          for branch in "${branches[@]}"; do
+            if [ "$branch" = "$default_branch" ]; then
+              preserved+=("$branch（默认分支）")
+              continue
+            fi
+
+            if [ "$branch" = "$cleanup_branch" ]; then
+              continue
+            fi
+
+            if printf '%s\n' "${open_heads[@]}" | grep -Fxq "$branch"; then
+              preserved+=("$branch（开放 PR）")
+              continue
+            fi
+
+            if [[ "$branch" != agent/* ]]; then
+              preserved+=("$branch（非临时分支，保守保留）")
+              continue
+            fi
+
+            gh api --method DELETE "repos/${repo}/git/refs/heads/${branch}"
+            deleted+=("$branch")
+          done
+
+          body='## 分支清理完成'
+          body+=$'\n\n### 已删除'
+          if [ "${#deleted[@]}" -eq 0 ]; then
+            body+=$'\n\n- 无'
+          else
+            for branch in "${deleted[@]}"; do
+              body+=$'\n\n- `'
+              body+="$branch"
+              body+='`'
+            done
+          fi
+
+          body+=$'\n\n### 已保留'
+          for branch in "${preserved[@]}"; do
+            body+=$'\n\n- `'
+            body+="$branch"
+            body+='`'
+          done
+
+          gh pr comment "$GITHUB_EVENT_PATH" >/dev/null 2>&1 || true
+          gh api --method POST "repos/${repo}/issues/${{ github.event.pull_request.number }}/comments" -f body="$body"
+
+          mapfile -t remaining < <(
+            gh api --paginate "repos/${repo}/branches?per_page=100" --jq '.[].name'
+          )
+          printf '删除临时清理分支前，剩余分支：\n- %s\n' "${remaining[@]}"
+
+          gh api --method DELETE "repos/${repo}/git/refs/heads/${cleanup_branch}"
+          echo "已删除清理分支：${cleanup_branch}"
