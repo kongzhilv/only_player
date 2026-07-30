@@ -1,0 +1,44 @@
+name: 清理 1.0.147 临时分支
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/cleanup-v1.0.147-branches.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    name: 删除修复与清理分支
+    runs-on: ubuntu-latest
+    steps:
+      - name: 删除并核验临时分支
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLEANUP_BRANCH: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+          feature_branch='agent/fix-tablet-quick-settings-dialog'
+
+          if gh api "repos/${repo}/git/ref/heads/${feature_branch}" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/${repo}/git/refs/heads/${feature_branch}"
+            deleted="${feature_branch}"
+          else
+            deleted='无（目标分支已不存在）'
+          fi
+
+          body="## 临时分支清理完成"
+          body+=$'\n\n- 已处理：'
+          body+="$deleted"
+          body+=$'\n- 保留：main、v1.0.147 标签与正式 Release'
+          gh pr comment "$PR_NUMBER" --repo "$repo" --body "$body"
+          gh pr close "$PR_NUMBER" --repo "$repo"
+          gh api --method DELETE "repos/${repo}/git/refs/heads/${CLEANUP_BRANCH}"
+          echo "已删除清理分支：${CLEANUP_BRANCH}"
