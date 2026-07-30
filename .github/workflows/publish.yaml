@@ -166,25 +166,34 @@ jobs:
           fi
 
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
-          if [ -z "$apksigner" ]; then
-            echo '::error::未找到 apksigner'
+          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)
+          if [ -z "$apksigner" ] || [ -z "$aapt" ]; then
+            echo '::error::未找到 apksigner 或 aapt'
             exit 1
           fi
 
+          certificate_digest() {
+            "$apksigner" verify --print-certs "$1" |
+              sed -n -E 's/^.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f]+).*$/\1/p' |
+              head -n 1 |
+              tr '[:upper:]' '[:lower:]'
+          }
+
           for apk in "$arm64" "$x64"; do
             "$apksigner" verify --verbose --print-certs "$apk"
-            badging=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)
-            package_name=$($badging dump badging "$apk" | sed -n "s/package: name='\([^']*\)'.*/\1/p" | head -n 1)
+            package_name=$($aapt dump badging "$apk" | sed -n "s/package: name='\([^']*\)'.*/\1/p" | head -n 1)
             if [ "$package_name" != 'io.github.kongzhilv.onlyplayer' ]; then
               echo "::error::$apk 的包名错误：$package_name"
               exit 1
             fi
           done
 
-          arm_digest=$($apksigner verify --print-certs "$arm64" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)
-          x64_digest=$($apksigner verify --print-certs "$x64" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)
-          if [ -z "$arm_digest" ] || [ "$arm_digest" != "$x64_digest" ]; then
-            echo '::error::两个 APK 的签名证书不一致'
+          arm_digest=$(certificate_digest "$arm64")
+          x64_digest=$(certificate_digest "$x64")
+          echo "arm64 证书 SHA-256：$arm_digest"
+          echo "x86_64 证书 SHA-256：$x64_digest"
+          if [ -z "$arm_digest" ] || [ -z "$x64_digest" ] || [ "$arm_digest" != "$x64_digest" ]; then
+            echo '::error::两个 APK 的签名证书摘要为空或不一致'
             exit 1
           fi
 
@@ -252,9 +261,10 @@ jobs:
           arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' /tmp/final-release.json)
           x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' /tmp/final-release.json)
           sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/final-release.json)
+          fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/final-release.json)
           cert=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/final-release.json)
 
-          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] || [ "$cert" -lt 1 ]; then
+          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] || [ "$fingerprint" -lt 1 ] || [ "$cert" -lt 1 ]; then
             echo '::error::Release 资产核验失败'
             exit 1
           fi
