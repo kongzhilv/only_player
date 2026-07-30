@@ -1,16 +1,17 @@
 <div align="center">
 
-# Only Player
+# Only Player Fork
 
-**现代化、简洁且功能完整的 Android 视频播放器**
+**现代化、简洁且功能完整的 Android 本地视频播放器**
 
 [![Android 11+](https://img.shields.io/badge/Android-11%2B-34A853?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
-[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/compose)
-[![Media3](https://img.shields.io/badge/Media3-ExoPlayer-FF6F00?logo=android&logoColor=white)](https://developer.android.com/media/media3)
+[![测试检查](https://github.com/kongzhilv/only_player/actions/workflows/test.yaml/badge.svg)](https://github.com/kongzhilv/only_player/actions/workflows/test.yaml)
+[![最新版本](https://img.shields.io/github/v/release/kongzhilv/only_player?display_name=tag)](https://github.com/kongzhilv/only_player/releases/latest)
 [![许可证](https://img.shields.io/badge/许可证-GPL--3.0-blue)](LICENSE)
 
-[下载正式版](https://github.com/kongzhilv/only_player/releases) ·
+[下载最新版](https://github.com/kongzhilv/only_player/releases/latest) ·
+[查看全部版本](https://github.com/kongzhilv/only_player/releases) ·
 [提交问题](https://github.com/kongzhilv/only_player/issues) ·
 [查看构建](https://github.com/kongzhilv/only_player/actions)
 
@@ -20,11 +21,36 @@
 
 ## 项目简介
 
-Only Player 是一款面向 Android 的本地视频播放器，使用 **Kotlin、Jetpack Compose、Hilt、Media3 / ExoPlayer** 构建。
+Only Player Fork 是一款面向 Android 的本地视频播放器，使用 **Kotlin、Jetpack Compose、Hilt 和 Media3 / ExoPlayer** 构建。
 
 本仓库基于 [Kindness-Kismet/only_player](https://github.com/Kindness-Kismet/only_player) 继续维护；其上游项目延续自 [Next Player](https://github.com/anilbeesetti/nextplayer)。感谢原项目与所有贡献者提供的基础能力。
 
-当前最低系统版本为 **Android 11（API 30）**。
+当前 fork 的重要信息：
+
+| 项目 | 内容 |
+|---|---|
+| 应用名称 | Only Player Fork |
+| 应用 ID | `io.github.kongzhilv.onlyplayer` |
+| 最低系统版本 | Android 11（API 30） |
+| 更新来源 | `kongzhilv/only_player` 的正式 Release |
+| 发布架构 | `arm64-v8a`、`x86_64` |
+| 签名方式 | fork 自有长期固定签名 |
+
+由于应用 ID 与上游的 `one.only.player` 不同，本 fork 可以和上游版本同时安装，但不会覆盖上游版本。
+
+---
+
+## 本 fork 的主要改动
+
+- 修复手动设置的播放倍速在播放结束、播放器重新准备或重复播放时回到 1 倍的问题。
+- 普通倍速会保存到当前视频，并在再次打开视频时恢复。
+- 长按临时倍速保持独立，松手后恢复，不会覆盖已保存的普通倍速。
+- 补全远程视频稳定播放状态键的倍速迁移。
+- 使用独立应用 ID，可与上游版本并存。
+- 更新检查改为读取本仓库的正式 Release。
+- 正式版使用固定长期签名，并在发布流程中核验两个架构的证书一致性。
+
+当前版本的完整变化见 [.github/CHANGELOG.md](.github/CHANGELOG.md)。
 
 ---
 
@@ -35,33 +61,74 @@ Only Player 是一款面向 Android 的本地视频播放器，使用 **Kotlin�
 | 媒体库 | 文件夹、树状目录、视频列表、搜索、网格与列表布局、排序、目录排除 |
 | 播放 | 断点续播、自动连播、画中画、后台播放、播放队列、循环播放 |
 | 操作 | 横滑快进快退、竖滑亮度与音量、双击跳转、双指缩放、长按临时倍速 |
-| 倍速 | 普通倍速选择会保存到当前视频；长按倍速仅临时生效，松手后恢复 |
+| 倍速 | 普通倍速按视频保存；长按倍速只临时生效，松手后恢复 |
 | 字幕 | 内嵌字幕、外挂字幕、ASS 特效、编码、字体、字号、背景、延迟与速度调整 |
 | 音频 | 音轨选择、首选语言、跳过静音、音量增强与音量标准化 |
 | 个性化 | Material 3、动态取色、应用内语言切换、播放器控件与手势配置 |
-| 数据 | 单文件播放进度、音轨、字幕轨、缩放和播放速度记忆，设置备份与恢复 |
-| 构建 | GitHub Actions 自动检查、分架构签名构建、自动生成 GitHub Release |
+| 数据 | 播放进度、音轨、字幕轨、缩放和播放速度记忆，设置备份与恢复 |
+| 构建 | GitHub Actions 自动测试、分架构正式构建、长期签名与 Release 核验 |
 
 ---
 
 ## 下载与安装
 
-前往 [Releases](https://github.com/kongzhilv/only_player/releases) 下载最新版 APK。
+从 [Releases](https://github.com/kongzhilv/only_player/releases/latest) 下载最新版 APK。
 
-| 文件 | 适用设备 |
+| 文件名 | 适用设备 |
 |---|---|
-| `Only-Player-arm64-v8a-版本号.apk` | 绝大多数 Android 手机和平板，优先选择 |
-| `Only-Player-x86_64-版本号.apk` | x86_64 模拟器或少数特殊设备 |
+| `Only-Player-Fork-arm64-v8a-版本号.apk` | 绝大多数 Android 手机和平板，通常选择这个 |
+| `Only-Player-Fork-x86_64-版本号.apk` | x86_64 Android 模拟器或少数特殊设备 |
 
 安装步骤：
 
 1. 下载与设备架构相符的 APK。
 2. 在系统设置中允许浏览器或文件管理器“安装未知应用”。
-3. 安装并启动 Only Player。
+3. 安装并启动 Only Player Fork。
 4. 按提示授予视频或媒体访问权限。
 5. 使用“忽略 `.nomedia`”功能时，系统可能还会要求所有文件访问权限。
 
-> 正式版 APK 由 GitHub Actions 使用仓库配置的签名密钥构建。安装新版本时应保持签名一致，否则 Android 会要求先卸载旧版本。
+### 签名与升级说明
+
+正式版包名为：
+
+```text
+io.github.kongzhilv.onlyplayer
+```
+
+长期签名证书 SHA-256：
+
+```text
+b216ded82a850a9a55d885b8cbf1b8398bbd13b9c511fc3501f3595af89717b7
+```
+
+- 当前 Release 及后续版本将继续使用同一枚长期签名，可正常覆盖升级。
+- 本 fork 不能直接覆盖上游签名的 `one.only.player`，两者应作为不同应用安装。
+- 如果设备安装的是早期临时签名的 `v1.0.146`，需要先卸载一次，再安装当前 Release；安装当前长期签名版后，后续版本即可覆盖升级。
+- 卸载应用通常会清除应用数据，必要时请先在应用内导出设置备份。
+
+### 校验下载文件
+
+每个正式 Release 同时提供：
+
+```text
+SHA256SUMS.txt
+SHA256-CERT-FINGERPRINT.txt
+only-player-fork-signing-certificate.pem
+```
+
+Windows PowerShell 校验 APK 文件哈希：
+
+```powershell
+Get-FileHash .\Only-Player-Fork-arm64-v8a-1.0.146.apk -Algorithm SHA256
+```
+
+查看 APK 签名证书：
+
+```powershell
+apksigner verify --verbose --print-certs .\Only-Player-Fork-arm64-v8a-1.0.146.apk
+```
+
+APK 显示的证书 SHA-256 应与上面的长期签名指纹及 `SHA256-CERT-FINGERPRINT.txt` 一致。
 
 ---
 
@@ -76,7 +143,6 @@ Only Player 是一款面向 Android 的本地视频播放器，使用 **Kotlin�
 
 ### 播放与手势
 
-- 点击视频进入播放器。
 - 横向滑动：快进或快退。
 - 屏幕左侧竖滑：调节亮度。
 - 屏幕右侧竖滑：调节音量。
@@ -84,14 +150,14 @@ Only Player 是一款面向 Android 的本地视频播放器，使用 **Kotlin�
 - 双指缩放：缩放视频画面。
 - 长按：临时切换到设定倍速，松手后恢复原速度。
 
-### 设置播放速度
+### 播放速度
 
 播放器中的普通倍速菜单用于设置当前视频的正式播放速度：
 
 - 选择或拖动到目标速度后立即生效。
-- 该速度会保存到当前视频的播放状态中。
+- 速度会保存到当前视频的播放状态中。
 - 再次打开该视频时会恢复已保存的速度。
-- 长按临时倍速与普通倍速互相独立，不会覆盖已保存速度。
+- 长按临时倍速与普通倍速互相独立。
 
 ### 字幕
 
@@ -110,115 +176,6 @@ Only Player 是一款面向 Android 的本地视频播放器，使用 **Kotlin�
 
 ---
 
-## GitHub Actions 自动构建
-
-本仓库要求新建或修改 GitHub Actions 工作流时，所有仓库可控制的展示文字均使用中文：
-
-- 顶层 `name`：中文工作流名称。
-- `run-name`：中文运行标题。
-- `jobs.<job_id>.name`：中文任务名称。
-- `steps[*].name`：中文步骤名称。
-- `echo`、错误提示和人工可读日志：中文。
-- 工作流自动提交时的提交说明：中文。
-
-`job_id`、输入参数 ID、环境变量名、命令、Action 引用和代码标识符仍保留符合语法要求的英文标识。GitHub 网站自身的固定按钮文字由账号或浏览器语言决定，不受仓库工作流控制。
-
-### 测试检查
-
-工作流文件：`.github/workflows/test.yaml`
-
-显示名称：**测试检查**
-
-触发方式：
-
-- 向 `main` 分支推送代码。
-- 新建或更新 Pull Request。
-- 在 Actions 页面手动运行。
-
-主要步骤：
-
-1. 准备构建信息。
-2. 读取应用 ID、版本名称、版本号、分支和提交哈希。
-3. 配置 JDK 25。
-4. 配置 Gradle。
-5. 执行 Ktlint 格式化与检查。
-6. 检查格式化后是否产生未提交差异。
-7. 上传构建报告。
-8. 满足版本与更新日志条件时，自动触发正式版发布。
-
-手动运行方法：
-
-1. 打开仓库顶部的 **Actions**。
-2. 左侧选择 **测试检查**。
-3. 点击 **Run workflow / 运行工作流**。
-4. 选择分支并确认运行。
-
-### Android 正式版发布
-
-工作流文件：`.github/workflows/publish.yaml`
-
-显示名称：**Android 正式版发布**
-
-支持两种触发方式：
-
-#### 自动发布
-
-当代码合并到 `main` 后，“测试检查”会验证：
-
-- `versionName` 对应的标签尚未存在。
-- `.github/CHANGELOG.md` 自上次发布后已更新。
-- 格式与代码检查已通过。
-
-条件满足后会自动调用正式版发布工作流。
-
-#### 手动发布
-
-1. 打开 **Actions**。
-2. 选择 **Android 正式版发布**。
-3. 点击 **Run workflow / 运行工作流**。
-4. 在“发布版本号”中填写如 `1.0.146`。
-5. “是否创建 GitHub 发布”保持开启。
-6. 确认运行。
-
-发布流程会执行：
-
-1. 读取并校验应用版本。
-2. 校验发布版本与 `app/build.gradle.kts` 中的 `versionName` 一致。
-3. 检查签名配置。
-4. 读取 `.github/CHANGELOG.md` 作为发布说明。
-5. 分别构建 `arm64-v8a` 和 `x86_64` 正式版 APK。
-6. 校验 APK 是否存在。
-7. 上传 Actions 构建产物。
-8. 创建版本标签。
-9. 创建 GitHub Release 并附加 APK。
-
-### 正式版签名 Secrets
-
-在仓库“Settings → Secrets and variables → Actions”中配置：
-
-| Secret | 说明 |
-|---|---|
-| `KEYSTORE` | JKS / Keystore 文件经过 Base64 编码后的完整内容 |
-| `KEYSTORE_PASSWORD` | Keystore 密码 |
-| `KEY_ALIAS` | 签名密钥别名 |
-| `KEY_PASSWORD` | 签名密钥密码 |
-
-PowerShell 生成 Base64：
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("D:\path\release.jks")) | Set-Clipboard
-```
-
-Linux / macOS 生成 Base64：
-
-```bash
-base64 -w 0 release.jks
-```
-
-> Secrets 仅用于 Actions 运行。不要把签名文件、密码或 Base64 内容提交到仓库。
-
----
-
 ## 本地构建
 
 ### 环境要求
@@ -226,6 +183,7 @@ base64 -w 0 release.jks
 - Android Studio 或 Android SDK 命令行工具
 - JDK 25
 - Android SDK 37
+- Python 3（使用 `scripts/build.py` 时需要）
 
 ### 克隆项目
 
@@ -234,57 +192,123 @@ git clone https://github.com/kongzhilv/only_player.git
 cd only_player
 ```
 
-### Windows
+### Debug 构建
+
+Windows：
 
 ```powershell
 .\gradlew.bat assembleDebug
 ```
 
-### Linux / macOS
+Linux / macOS：
 
 ```bash
 ./gradlew assembleDebug
 ```
 
-Debug APK 通常位于：
-
-```text
-app/build/outputs/apk/debug/
-```
-
-### 完整验证
-
-Windows：
-
-```powershell
-.\gradlew.bat ktlintCheck test assembleDebug --warning-mode=fail
-```
-
-Linux / macOS：
+完整检查：
 
 ```bash
 ./gradlew ktlintCheck test assembleDebug --warning-mode=fail
 ```
 
-### 使用项目构建脚本
+使用项目构建脚本生成 arm64 Debug APK：
 
-构建 arm64-v8a：
+```bash
+python scripts/build.py build-apk --build-type debug --abi arm64-v8a --clean
+```
+
+使用项目构建脚本生成分架构 APK：
 
 ```bash
 python scripts/build.py build-apk --abi arm64-v8a --clean
+python scripts/build.py build-apk --abi x86_64
 ```
 
-构建 x86_64：
-
-```bash
-python scripts/build.py build-apk --abi x86_64 --clean
-```
-
-生成的正式构建产物位于：
+构建脚本输出目录：
 
 ```text
 build/apk/
 ```
+
+正式签名构建需要配置对应的密钥库环境变量；日常开发应优先使用 Debug 构建，不要把签名文件或密码写入仓库。
+
+---
+
+## GitHub Actions
+
+### 测试检查
+
+工作流：[`test.yaml`](.github/workflows/test.yaml)
+
+触发条件：
+
+- 推送到 `main`。
+- 新建或更新 Pull Request。
+- 在 Actions 页面手动运行。
+
+执行内容：
+
+1. 读取并校验应用 ID、版本名称和版本号。
+2. 配置 JDK 25、Gradle 和 Python。
+3. 执行 Ktlint 与全部单元测试。
+4. 构建 arm64 Debug APK。
+5. 核验 Debug APK 的应用 ID。
+6. 上传构建报告。
+7. `main` 上满足版本和更新日志条件时，触发正式发布工作流。
+
+### Android 正式版发布
+
+工作流：[`publish.yaml`](.github/workflows/publish.yaml)
+
+正式发布流程：
+
+1. 校验版本号、应用 ID 和目标标签。
+2. 检查对应 Release 是否已经具有完整资产和正确长期签名。
+3. 执行 Ktlint 与单元测试。
+4. 从 Actions Secrets 恢复固定 PKCS12 密钥库。
+5. 将密钥库证书与 `SIGNING_CERT_SHA256` 对照。
+6. 分别构建 `arm64-v8a` 和 `x86_64` 正式 APK。
+7. 核验两个 APK 的包名、签名有效性和证书一致性。
+8. 生成 APK SHA-256、签名指纹和公开证书文件。
+9. 创建或更新 GitHub Release。
+10. 从 Release 重新读取资产并执行最终完整性检查。
+
+### 长期签名配置
+
+仓库“Settings → Secrets and variables → Actions”中使用：
+
+| 类型 | 名称 | 用途 |
+|---|---|---|
+| Secret | `KEYSTORE` | PKCS12 / JKS 密钥库的 Base64 完整内容 |
+| Secret | `KEYSTORE_PASSWORD` | 密钥库密码 |
+| Secret | `KEY_ALIAS` | 私钥别名 |
+| Secret | `KEY_PASSWORD` | 私钥密码 |
+| Variable | `SIGNING_CERT_SHA256` | 预期长期签名证书 SHA-256 |
+
+安全要求：
+
+- 不要把 `.p12`、`.jks`、密码、恢复文件或 Base64 内容提交到 Git。
+- GitHub Secrets 只用于自动构建，不能替代离线私钥备份。
+- 长期密钥库与恢复信息至少保存两份加密离线副本。
+- 修改 `SIGNING_CERT_SHA256` 或替换密钥前，必须确认是否会破坏现有升级链。
+
+---
+
+## 发布新版本
+
+1. 完成功能修改和真机验证。
+2. 运行 Ktlint、单元测试和 Debug 构建。
+3. 更新 `app/build.gradle.kts`：
+   - `versionCode` 必须递增。
+   - `versionName` 更新为目标版本。
+4. 更新 `.github/CHANGELOG.md`，只保留本次版本面向用户的变化。
+5. 合并到 `main`。
+6. 等待“测试检查”通过并自动触发“Android 正式版发布”。
+7. 在 Releases 页面确认两个 APK 和三项校验资产齐全。
+8. 确认 Release 中的证书指纹仍为长期签名指纹。
+
+也可以在 Actions 页面手动运行“Android 正式版发布”，输入与 `versionName` 一致的版本号。
 
 ---
 
@@ -310,30 +334,13 @@ scripts/              构建与维护脚本
 
 ---
 
-## 发布新版本
-
-1. 完成功能修改与真机验证。
-2. 运行完整格式、测试和 Debug 构建检查。
-3. 更新 `app/build.gradle.kts`：
-   - `versionCode` 增加。
-   - `versionName` 更新为目标版本。
-4. 更新 `.github/CHANGELOG.md`，只保留本次版本面向用户的变化。
-5. 合并到 `main`。
-6. 等待“测试检查”通过并自动触发“Android 正式版发布”。
-7. 在 Releases 页面确认版本标签、发布说明和两个架构的 APK。
-
-也可手动推送标签：
-
-```bash
-git tag v1.0.146
-git push origin v1.0.146
-```
-
-标签版本必须与 `app/build.gradle.kts` 中的 `versionName` 一致。
-
----
-
 ## 问题排查
+
+### 新 APK 提示签名不一致
+
+- 确认安装的是 `io.github.kongzhilv.onlyplayer`，而不是上游的 `one.only.player`。
+- 如果安装过早期临时签名版 `v1.0.146`，先备份设置，然后卸载旧版再安装当前 Release。
+- 使用 `apksigner --print-certs` 检查证书 SHA-256。
 
 ### 媒体库内容不完整
 
@@ -351,11 +358,11 @@ git push origin v1.0.146
 
 按顺序查看：
 
-1. **准备发布信息**：版本号读取与格式是否正确。
-2. **验证签名配置**：四个 Secrets 是否齐全且可解码。
-3. **签名构建**：Gradle、依赖或代码编译错误。
-4. **校验构建产物**：目标 APK 路径与名称是否正确。
-5. **创建 GitHub 发布**：标签权限、Release 权限或产物下载问题。
+1. 版本、应用 ID 和目标标签校验。
+2. 长期签名 Secrets 与 `SIGNING_CERT_SHA256`。
+3. Ktlint、单元测试和 Gradle 编译日志。
+4. 两个架构 APK 的包名与签名核验。
+5. Release 创建、资产上传和最终下载核验。
 
 ---
 
@@ -371,8 +378,11 @@ git push origin v1.0.146
 
 ---
 
-## 开源许可
+## 上游与许可
 
-本项目使用 [GNU General Public License v3.0](LICENSE) 开源。
+本仓库基于以下项目继续维护：
 
-修改、分发或再发布本项目时，请遵守 GPL-3.0 的相关要求。
+- [Kindness-Kismet/only_player](https://github.com/Kindness-Kismet/only_player)
+- [anilbeesetti/nextplayer](https://github.com/anilbeesetti/nextplayer)
+
+本项目使用 [GNU General Public License v3.0](LICENSE) 开源。修改、分发或再发布本项目时，请遵守 GPL-3.0 的相关要求。
