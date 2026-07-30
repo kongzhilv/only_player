@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,11 +16,11 @@ permissions:
 
 concurrency:
   group: ensure-release-1.0.146
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   ensure-release:
-    name: 清理临时文件、触发发布并回报结果
+    name: 定位正式发布、审查结果并清理
     runs-on: ubuntu-latest
     steps:
       - name: 检出主分支
@@ -28,74 +29,134 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: 记录已有发布运行
-        id: baseline
+      - name: 校验待发布源码
+        shell: bash
+        run: |
+          application_id=$(grep -m1 'applicationId = "' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          version_name=$(grep -m1 'versionName = "' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          version_code=$(grep -m1 'versionCode = ' app/build.gradle.kts | sed -E 's/.*= ([0-9]+).*/\1/')
+
+          if [ "$application_id" != 'one.only.player' ]; then
+            echo "::error::applicationId 为 ${application_id}，期望 one.only.player"
+            exit 1
+          fi
+          if [ "$version_name" != '1.0.146' ] || [ "$version_code" != '147' ]; then
+            echo "::error::当前版本为 ${version_name} (${version_code})，期望 1.0.146 (147)"
+            exit 1
+          fi
+          echo '包名与版本校验通过。'
+
+      - name: 查找现有 Release
+        id: existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          run_id=$(gh run list --workflow publish.yaml --limit 1 --json databaseId --jq '.[0].databaseId // 0')
-          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
-          echo "开始前最新发布运行 ID：${run_id}"
+          if gh release view v1.0.146 --json url,assets > "${RUNNER_TEMP}/existing-release.json" 2>/dev/null; then
+            arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' "${RUNNER_TEMP}/existing-release.json")
+            x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' "${RUNNER_TEMP}/existing-release.json")
+            if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ]; then
+              echo 'complete=true' >> "$GITHUB_OUTPUT"
+              echo 'v1.0.146 Release 与两个架构 APK 已存在。'
+              exit 0
+            fi
+            echo 'Release 已存在，但发布文件不完整，将继续审查。'
+          fi
+          echo 'complete=false' >> "$GITHUB_OUTPUT"
 
-      - name: 先清理一次性发布审查工作流
-        shell: bash
-        run: |
-          rm -f .github/workflows/ensure-release-1.0.146.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/ensure-release-1.0.146.yml
-          git commit -m 'CI：清理 1.0.146 一次性发布审查工作流'
-          git push origin HEAD:main
-          echo '主分支已恢复干净状态。'
-
-      - name: 等待自动发布任务出现
-        shell: bash
-        run: sleep 90
-
-      - name: 选择或触发正式发布运行
-        id: release-run
+      - name: 等待自动发布运行出现
+        id: locate
+        if: steps.existing.outputs.complete != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          baseline='${{ steps.baseline.outputs.run_id }}'
-          latest=$(gh run list --workflow publish.yaml --limit 1 --json databaseId,status,conclusion --jq '.[0] // {}')
-          run_id=$(printf '%s' "$latest" | jq -r '.databaseId // 0')
-          status=$(printf '%s' "$latest" | jq -r '.status // ""')
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          commit_epoch=$(git show -s --format=%ct HEAD)
+          since_epoch=$((commit_epoch - 300))
+          run_id=''
 
-          if [ "$run_id" = '0' ] || { [ "$run_id" = "$baseline" ] && [ "$status" = 'completed' ]; }; then
-            echo '未发现新的正式发布运行，现直接触发 publish.yaml。'
-            gh workflow run publish.yaml --ref main -f version='1.0.146' -f create_release=true
-            sleep 15
-            run_id=$(gh run list --workflow publish.yaml --branch main --limit 1 --json databaseId --jq '.[0].databaseId // 0')
-          else
-            echo "发现新的正式发布运行：${run_id}"
+          for attempt in $(seq 1 36); do
+            runs=$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "${api}/actions/workflows/publish.yaml/runs?branch=main&per_page=20")
+
+            run_id=$(printf '%s' "$runs" | jq -r --argjson since "$since_epoch" '
+              [.workflow_runs[] | select((.created_at | fromdateiso8601) >= $since)]
+              | sort_by(.created_at)
+              | last
+              | .id // empty
+            ')
+
+            if [ -n "$run_id" ]; then
+              echo "已找到正式发布运行：${run_id}"
+              break
+            fi
+
+            echo "第 ${attempt} 次等待：正式发布运行尚未出现。"
+            sleep 20
+          done
+
+          if [ -z "$run_id" ]; then
+            echo '自动发布运行未出现，现通过 REST API 触发 publish.yaml。'
+            payload='{"ref":"main","inputs":{"version":"1.0.146","create_release":"true"}}'
+            curl --fail-with-body --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "${api}/actions/workflows/publish.yaml/dispatches" \
+              -d "$payload"
+
+            for attempt in $(seq 1 15); do
+              sleep 10
+              runs=$(curl --fail-with-body --silent --show-error \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "${api}/actions/workflows/publish.yaml/runs?event=workflow_dispatch&branch=main&per_page=10")
+              run_id=$(printf '%s' "$runs" | jq -r --argjson since "$since_epoch" '
+                [.workflow_runs[] | select((.created_at | fromdateiso8601) >= $since)]
+                | sort_by(.created_at)
+                | last
+                | .id // empty
+              ')
+              if [ -n "$run_id" ]; then
+                break
+              fi
+            done
           fi
 
-          if [ "$run_id" = '0' ]; then
-            echo '::error::触发后仍未找到正式发布运行。'
+          if [ -z "$run_id" ]; then
+            echo '::error::正式发布运行仍未创建。'
             exit 1
           fi
 
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
-          echo "将跟踪正式发布运行：${run_id}"
 
       - name: 等待正式发布结束
         id: wait
+        if: steps.existing.outputs.complete != 'true' && steps.locate.outputs.run_id != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          run_id='${{ steps.release-run.outputs.run_id }}'
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          run_id='${{ steps.locate.outputs.run_id }}'
           conclusion=''
-          url=''
+          run_url=''
 
-          for attempt in $(seq 1 60); do
-            data=$(gh run view "$run_id" --json status,conclusion,url)
+          for attempt in $(seq 1 90); do
+            data=$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "${api}/actions/runs/${run_id}")
             status=$(printf '%s' "$data" | jq -r '.status')
             conclusion=$(printf '%s' "$data" | jq -r '.conclusion // ""')
-            url=$(printf '%s' "$data" | jq -r '.url')
+            run_url=$(printf '%s' "$data" | jq -r '.html_url // ""')
             echo "第 ${attempt} 次检查：status=${status} conclusion=${conclusion:-等待中}"
             if [ "$status" = 'completed' ]; then
               break
@@ -104,55 +165,93 @@ jobs:
           done
 
           echo "conclusion=${conclusion}" >> "$GITHUB_OUTPUT"
-          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "run_url=${run_url}" >> "$GITHUB_OUTPUT"
           if [ -z "$conclusion" ]; then
             echo '::error::正式发布在等待时限内仍未结束。'
             exit 1
           fi
 
-      - name: 生成发布审查报告
+      - name: 审查 Release 与发布文件
+        id: assets
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          run_id='${{ steps.release-run.outputs.run_id }}'
+          complete='false'
+          release_url=''
+          arm64='0'
+          x64='0'
+
+          if gh release view v1.0.146 --json url,assets > "${RUNNER_TEMP}/release.json" 2>/dev/null; then
+            release_url=$(jq -r '.url // ""' "${RUNNER_TEMP}/release.json")
+            arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' "${RUNNER_TEMP}/release.json")
+            x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' "${RUNNER_TEMP}/release.json")
+            if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ]; then
+              complete='true'
+            fi
+          fi
+
+          echo "complete=${complete}" >> "$GITHUB_OUTPUT"
+          echo "release_url=${release_url}" >> "$GITHUB_OUTPUT"
+          echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
+          echo "x64=${x64}" >> "$GITHUB_OUTPUT"
+
+      - name: 发布审查报告
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id='${{ steps.locate.outputs.run_id }}'
           conclusion='${{ steps.wait.outputs.conclusion }}'
-          run_url='${{ steps.wait.outputs.url }}'
+          run_url='${{ steps.wait.outputs.run_url }}'
+          complete='${{ steps.assets.outputs.complete }}'
           report="${RUNNER_TEMP}/release-report.md"
 
           {
             echo '## Only Player v1.0.146 发布审查结果'
             echo
-            echo "- 正式发布运行：${run_url:-未取得链接}"
-            echo "- 运行 ID：${run_id:-未知}"
-            echo "- 结论：${conclusion:-监测步骤异常}"
+            echo "- 正式发布运行：${run_url:-未创建或未取得链接}"
+            echo "- 运行 ID：${run_id:-无}"
+            echo "- 运行结论：${conclusion:-未取得}"
+            echo "- Release：${{ steps.assets.outputs.release_url }}"
+            echo "- arm64-v8a APK：$([ '${{ steps.assets.outputs.arm64 }}' -gt 0 ] && echo '存在' || echo '缺失')"
+            echo "- x86_64 APK：$([ '${{ steps.assets.outputs.x64 }}' -gt 0 ] && echo '存在' || echo '缺失')"
             echo
           } > "$report"
 
-          if [ "$conclusion" = 'success' ]; then
-            release_json=$(gh release view v1.0.146 --json tagName,url,assets 2>/dev/null || echo '{}')
-            arm64=$(printf '%s' "$release_json" | jq '[.assets[]? | select(.name | contains("arm64-v8a"))] | length')
-            x64=$(printf '%s' "$release_json" | jq '[.assets[]? | select(.name | contains("x86_64"))] | length')
-            release_url=$(printf '%s' "$release_json" | jq -r '.url // ""')
-            {
-              echo "- Release：${release_url:-未找到}"
-              echo "- arm64-v8a APK：$([ "$arm64" -gt 0 ] && echo '存在' || echo '缺失')"
-              echo "- x86_64 APK：$([ "$x64" -gt 0 ] && echo '存在' || echo '缺失')"
-            } >> "$report"
-          else
+          if [ "$complete" != 'true' ] && [ -n "$run_id" ]; then
             echo '### 失败日志末尾' >> "$report"
             echo '```text' >> "$report"
-            gh run view "$run_id" --log-failed 2>&1 | tail -n 160 >> "$report" || true
+            gh run view "$run_id" --log-failed 2>&1 | tail -n 180 >> "$report" || true
             echo '```' >> "$report"
           fi
 
           gh pr comment 2 --body-file "$report"
           cat "$report"
 
-      - name: 确认发布成功
-        if: steps.wait.outputs.conclusion != 'success'
+      - name: 清理一次性发布审查工作流
+        if: always()
         shell: bash
         run: |
-          echo '::error::v1.0.146 正式发布尚未成功，详细失败日志已写入 PR #2 评论。'
+          git reset --hard
+          git fetch origin main
+          git checkout -B main origin/main
+          rm -f .github/workflows/ensure-release-1.0.146.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/ensure-release-1.0.146.yml
+          if git diff --cached --quiet; then
+            echo '一次性工作流已被其他任务清理。'
+            exit 0
+          fi
+          git commit -m 'CI：清理 1.0.146 一次性发布审查工作流'
+          git push origin HEAD:main
+
+      - name: 确认正式发布完成
+        if: steps.assets.outputs.complete != 'true'
+        shell: bash
+        run: |
+          echo '::error::v1.0.146 Release 或两个架构 APK 尚未完整生成，详情已写入 PR #2 评论。'
           exit 1
