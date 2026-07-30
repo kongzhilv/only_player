@@ -23,10 +23,12 @@ jobs:
         shell: bash
         run: |
           if gh release view v1.0.146 --repo "$GITHUB_REPOSITORY" --json assets,url > /tmp/existing.json 2>/dev/null; then
-            arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' /tmp/existing.json)
-            x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' /tmp/existing.json)
+            arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/existing.json)
+            x64=$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/existing.json)
             sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/existing.json)
-            if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ] && [ "$sums" -gt 0 ]; then
+            fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/existing.json)
+            certificate=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/existing.json)
+            if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ] && [ "$sums" -gt 0 ] && [ "$fingerprint" -gt 0 ] && [ "$certificate" -gt 0 ]; then
               echo 'complete=true' >> "$GITHUB_OUTPUT"
               cat /tmp/existing.json
               exit 0
