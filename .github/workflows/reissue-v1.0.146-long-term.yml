@@ -1,0 +1,121 @@
+name: 重发并核验 v1.0.146 长期签名版
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/reissue-v1.0.146-long-term.yml'
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+
+jobs:
+  reissue:
+    name: 触发、跟踪并核验长期签名 Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 触发长期签名正式发布
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yaml/dispatches" \
+            -f ref='main' \
+            -F 'inputs[version]=1.0.146' \
+            -F 'inputs[create_release]=true'
+
+      - name: 获取正式发布运行 ID
+        id: run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          started_at='${{ steps.dispatch.outputs.started_at }}'
+          run_id=''
+          run_url=''
+          for attempt in $(seq 1 30); do
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/publish.yaml/runs?event=workflow_dispatch&branch=main&per_page=20")
+            run_id=$(printf '%s' "$data" | jq -r --arg started "$started_at" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | last | .id // empty')
+            run_url=$(printf '%s' "$data" | jq -r --arg started "$started_at" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | last | .html_url // empty')
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo '::error::未取得正式发布运行 ID'
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          echo "正式发布运行：$run_url"
+
+      - name: 等待正式发布完成
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id='${{ steps.run.outputs.run_id }}'
+          conclusion=''
+          for attempt in $(seq 1 90); do
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+            status=$(printf '%s' "$data" | jq -r '.status')
+            conclusion=$(printf '%s' "$data" | jq -r '.conclusion // empty')
+            echo "第 $attempt 次检查：$status ${conclusion:-运行中}"
+            if [ "$status" = 'completed' ]; then
+              break
+            fi
+            sleep 20
+          done
+          if [ "$conclusion" != 'success' ]; then
+            gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed || true
+            exit 1
+          fi
+
+      - name: 核验 Release 资产和长期证书
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          expected='b216ded82a850a9a55d885b8cbf1b8398bbd13b9c511fc3501f3595af89717b7'
+          gh release view v1.0.146 --repo "$GITHUB_REPOSITORY" --json tagName,url,assets > /tmp/release.json
+
+          arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/release.json)
+          x64=$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/release.json)
+          sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/release.json)
+          fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/release.json)
+          certificate=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/release.json)
+
+          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] ||
+             [ "$fingerprint" -lt 1 ] || [ "$certificate" -lt 1 ]; then
+            echo '::error::Release 资产不完整'
+            exit 1
+          fi
+
+          mkdir -p /tmp/release-assets
+          gh release download v1.0.146 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'SHA256-CERT-FINGERPRINT.txt' \
+            --dir /tmp/release-assets \
+            --clobber
+
+          published=$(tr -d '[:space:]:-' \
+            </tmp/release-assets/SHA256-CERT-FINGERPRINT.txt |
+            tr '[:upper:]' '[:lower:]')
+
+          cat /tmp/release.json
+          echo "预期长期证书：$expected"
+          echo "已发布证书：$published"
+
+          if [ "$published" != "$expected" ]; then
+            echo '::error::Release 仍不是长期签名版'
+            exit 1
+          fi
+
+          echo '✅ v1.0.146 已使用长期签名重发并完成资产核验。'
