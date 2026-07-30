@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.window.WindowDialog
 
 @Composable
@@ -65,33 +66,14 @@ fun NextDialog(
     confirmButton: @Composable () -> Unit,
     dismissButton: @Composable (() -> Unit)? = null,
 ) {
-    val configuration = LocalConfiguration.current
-    val maxDialogHeight = configuration.screenHeightDp.dp - NextDialogDefaults.dialogMargin * 2
-
-    WindowDialog(
-        show = true,
-        modifier = modifier
-            .widthIn(max = configuration.screenWidthDp.dp - NextDialogDefaults.dialogMargin * 2)
-            .heightIn(max = maxDialogHeight),
-        title = title,
+    NextDialog(
         onDismissRequest = onDismissRequest,
-    ) {
-        Column(
-            modifier = Modifier.heightIn(max = maxDialogHeight),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = false),
-            ) {
-                content()
-            }
-            NextDialogButtonRow(
-                confirmButton = confirmButton,
-                dismissButton = dismissButton,
-            )
-        }
-    }
+        title = { Text(text = title) },
+        content = content,
+        modifier = modifier,
+        confirmButton = confirmButton,
+        dismissButton = dismissButton,
+    )
 }
 
 @Composable
