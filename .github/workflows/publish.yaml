@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   release:
-    name: 构建、签名、审查并发布
+    name: 构建、长期签名、审查并发布
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -92,25 +92,60 @@ jobs:
           echo "版本：$release_version ($version_code)"
           echo "标签：$tag"
 
-      - name: 检查是否已经完整发布
+      - name: 检查是否已经使用长期签名完整发布
         id: existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_CERT_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
+          expected=$(printf '%s' "$EXPECTED_CERT_SHA256" |
+            tr -d '[:space:]:-' |
+            tr '[:upper:]' '[:lower:]')
+
+          if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo '::error::SIGNING_CERT_SHA256 未设置或格式错误'
+            exit 1
+          fi
+
           tag='${{ steps.release.outputs.tag }}'
           if ! gh release view "$tag" --json assets >/tmp/release.json 2>/dev/null; then
             echo 'complete=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' /tmp/release.json)
-          x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' /tmp/release.json)
-          if [ "$arm64" -gt 0 ] && [ "$x64" -gt 0 ]; then
-            echo '完整 Release 已存在，跳过重复构建。'
+          arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/release.json)
+          x64=$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/release.json)
+          sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/release.json)
+          fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/release.json)
+          certificate=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/release.json)
+
+          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] ||
+             [ "$fingerprint" -lt 1 ] || [ "$certificate" -lt 1 ]; then
+            echo 'Release 资产不完整，将重新构建并覆盖。'
+            echo 'complete=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          rm -rf /tmp/existing-release
+          mkdir -p /tmp/existing-release
+          gh release download "$tag" \
+            --pattern 'SHA256-CERT-FINGERPRINT.txt' \
+            --dir /tmp/existing-release \
+            --clobber
+
+          published=$(tr -d '[:space:]:-' \
+            </tmp/existing-release/SHA256-CERT-FINGERPRINT.txt |
+            tr '[:upper:]' '[:lower:]')
+
+          echo "预期长期证书 SHA-256：$expected"
+          echo "现有 Release 证书 SHA-256：$published"
+
+          if [ "$published" = "$expected" ]; then
+            echo 'Release 已使用当前长期签名，跳过重复构建。'
             echo 'complete=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'Release 不完整，将重新构建并覆盖资产。'
+            echo 'Release 使用旧的临时签名，将以长期签名覆盖重发。'
             echo 'complete=false' >> "$GITHUB_OUTPUT"
           fi
 
@@ -119,30 +154,80 @@ jobs:
         shell: bash
         run: ./gradlew ktlintCheck test --warning-mode=fail
 
-      - name: 生成本次独立签名
+      - name: 恢复并校验长期签名密钥
         if: steps.existing.outputs.complete != 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_VALUE: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD_VALUE: ${{ secrets.KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
-          password=$(openssl rand -hex 24)
-          alias='only-player-fork'
-          keystore="${RUNNER_TEMP}/only-player-fork.p12"
-          echo "::add-mask::$password"
+          for name in \
+            KEYSTORE_BASE64 \
+            STORE_PASSWORD \
+            KEY_ALIAS_VALUE \
+            KEY_PASSWORD_VALUE \
+            EXPECTED_CERT_SHA256
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::缺少长期签名配置：${name}"
+              exit 1
+            fi
+          done
 
-          keytool -genkeypair -noprompt \
-            -storetype PKCS12 \
+          expected=$(printf '%s' "$EXPECTED_CERT_SHA256" |
+            tr -d '[:space:]:-' |
+            tr '[:upper:]' '[:lower:]')
+
+          if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo '::error::SIGNING_CERT_SHA256 格式错误'
+            exit 1
+          fi
+
+          keystore="${RUNNER_TEMP}/only-player-fork-release.p12"
+          certificate="${RUNNER_TEMP}/only-player-fork-release-certificate.pem"
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          if [ ! -s "$keystore" ]; then
+            echo '::error::KEYSTORE 解码后为空'
+            exit 1
+          fi
+
+          keytool -list \
             -keystore "$keystore" \
-            -storepass "$password" \
-            -keypass "$password" \
-            -alias "$alias" \
-            -keyalg RSA \
-            -keysize 4096 \
-            -validity 10950 \
-            -dname 'CN=kongzhilv Only Player Fork, OU=Release, O=kongzhilv, L=Taipei, ST=Taiwan, C=TW'
+            -storepass "$STORE_PASSWORD" \
+            -alias "$KEY_ALIAS_VALUE" >/dev/null
+
+          keytool -exportcert -rfc \
+            -keystore "$keystore" \
+            -storepass "$STORE_PASSWORD" \
+            -alias "$KEY_ALIAS_VALUE" \
+            -file "$certificate"
+
+          actual=$(openssl x509 \
+            -in "$certificate" \
+            -noout \
+            -fingerprint \
+            -sha256 |
+            cut -d= -f2 |
+            tr -d '[:space:]:-' |
+            tr '[:upper:]' '[:lower:]')
+
+          echo "预期长期证书 SHA-256：$expected"
+          echo "密钥库证书 SHA-256：$actual"
+
+          if [ "$actual" != "$expected" ]; then
+            echo '::error::密钥库证书与 SIGNING_CERT_SHA256 不一致'
+            exit 1
+          fi
 
           echo "KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
-          echo "KEYSTORE_PASSWORD=$password" >> "$GITHUB_ENV"
-          echo "KEY_ALIAS=$alias" >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=$KEY_ALIAS_VALUE" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD_VALUE" >> "$GITHUB_ENV"
+          echo "EXPECTED_CERT_SHA256=$expected" >> "$GITHUB_ENV"
 
       - name: 构建两个架构的正式 APK
         if: steps.existing.outputs.complete != 'true'
@@ -152,7 +237,7 @@ jobs:
           python scripts/build.py build-apk --abi x86_64
           ls -lh build/apk
 
-      - name: 审查 APK、包名和签名
+      - name: 审查 APK、包名和长期签名
         if: steps.existing.outputs.complete != 'true'
         shell: bash
         run: |
@@ -192,8 +277,12 @@ jobs:
           x64_digest=$(certificate_digest "$x64")
           echo "arm64 证书 SHA-256：$arm_digest"
           echo "x86_64 证书 SHA-256：$x64_digest"
-          if [ -z "$arm_digest" ] || [ -z "$x64_digest" ] || [ "$arm_digest" != "$x64_digest" ]; then
-            echo '::error::两个 APK 的签名证书摘要为空或不一致'
+          echo "预期长期证书 SHA-256：$EXPECTED_CERT_SHA256"
+
+          if [ -z "$arm_digest" ] || [ -z "$x64_digest" ] ||
+             [ "$arm_digest" != "$x64_digest" ] ||
+             [ "$arm_digest" != "$EXPECTED_CERT_SHA256" ]; then
+            echo '::error::APK 证书为空、架构间不一致或不是预期长期证书'
             exit 1
           fi
 
@@ -222,13 +311,14 @@ jobs:
           - 应用 ID：io.github.kongzhilv.onlyplayer
           - versionName：${{ steps.release.outputs.version }}
           - versionCode：${{ steps.release.outputs.version_code }}
-          - 签名证书 SHA-256：${certificate_sha256}
+          - 长期签名证书 SHA-256：${certificate_sha256}
           - 架构：arm64-v8a、x86_64
 
-          此版本使用独立应用 ID 和独立签名，可与原作者版本同时安装；它不会覆盖原作者签名的 one.only.player。
+          此版本已经切换为仓库长期签名。以后版本必须继续使用同一枚密钥，才能覆盖升级。
+          该应用可与原作者版本同时安装；它不会覆盖原作者签名的 one.only.player。
           EOF
 
-      - name: 创建 GitHub Release
+      - name: 创建或更新 GitHub Release
         if: steps.existing.outputs.complete != 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.create_release == 'true')
         uses: softprops/action-gh-release@v2.6.1
         env:
@@ -248,25 +338,50 @@ jobs:
             build/apk/SHA256-CERT-FINGERPRINT.txt
             build/apk/only-player-fork-signing-certificate.pem
 
-      - name: 最终核验 Release 资产
+      - name: 最终核验 Release 资产和长期签名
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.create_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_CERT_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
+          expected=$(printf '%s' "$EXPECTED_CERT_SHA256" |
+            tr -d '[:space:]:-' |
+            tr '[:upper:]' '[:lower:]')
           tag='${{ steps.release.outputs.tag }}'
+
           gh release view "$tag" --json url,tagName,assets > /tmp/final-release.json
           cat /tmp/final-release.json
 
-          arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a"))] | length' /tmp/final-release.json)
-          x64=$(jq '[.assets[] | select(.name | contains("x86_64"))] | length' /tmp/final-release.json)
+          arm64=$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/final-release.json)
+          x64=$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/final-release.json)
           sums=$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/final-release.json)
           fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/final-release.json)
           cert=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/final-release.json)
 
-          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] || [ "$fingerprint" -lt 1 ] || [ "$cert" -lt 1 ]; then
+          if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] ||
+             [ "$fingerprint" -lt 1 ] || [ "$cert" -lt 1 ]; then
             echo '::error::Release 资产核验失败'
             exit 1
           fi
 
-          echo '✅ Release 与两个架构 APK 已完整发布。'
+          rm -rf /tmp/final-release-assets
+          mkdir -p /tmp/final-release-assets
+          gh release download "$tag" \
+            --pattern 'SHA256-CERT-FINGERPRINT.txt' \
+            --dir /tmp/final-release-assets \
+            --clobber
+
+          published=$(tr -d '[:space:]:-' \
+            </tmp/final-release-assets/SHA256-CERT-FINGERPRINT.txt |
+            tr '[:upper:]' '[:lower:]')
+
+          echo "预期长期证书 SHA-256：$expected"
+          echo "Release 证书 SHA-256：$published"
+
+          if [ "$published" != "$expected" ]; then
+            echo '::error::Release 中的签名指纹不是当前长期证书'
+            exit 1
+          fi
+
+          echo '✅ Release、两个架构 APK 与长期签名已完整核验。'
