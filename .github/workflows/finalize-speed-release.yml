@@ -1,11 +1,13 @@
 name: 倍速修复最终审查
 
-run-name: 倍速修复最终审查 · ${{ github.ref_name }}
+run-name: 倍速修复最终审查 · ${{ github.head_ref || github.ref_name }}
 
 on:
   push:
     branches:
       - agent/finalize-speed-release
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +16,7 @@ permissions:
 jobs:
   finalize:
     name: 修正倍速持久化并完成验证
+    if: (github.event_name == 'push' && github.ref_name == 'agent/finalize-speed-release') || github.head_ref == 'agent/finalize-speed-release'
     runs-on: ubuntu-latest
     steps:
       - name: 检出修复分支
@@ -44,69 +47,52 @@ jobs:
           path = Path('feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt')
           text = path.read_text(encoding='utf-8')
 
-          old_transition = '''        Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-              -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-
-              Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-              -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-
-              else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-          }'''
-          new_transition = '''        Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+          transition_pattern = re.compile(
+              r'''        Player\.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,\n\s*-> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed\n\n\s*Player\.MEDIA_ITEM_TRANSITION_REASON_REPEAT,\n\s*-> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed\n\n\s*else -> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed'''
+          )
+          transition_replacement = '''        Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
               Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
               -> storedPlaybackSpeed ?: currentPlaybackSpeed
 
-              else -> storedPlaybackSpeed ?: currentPlaybackSpeed
-          }'''
+              else -> storedPlaybackSpeed ?: currentPlaybackSpeed'''
+          text, transition_count = transition_pattern.subn(transition_replacement, text, count=1)
+          if transition_count == 0 and text.count('-> storedPlaybackSpeed ?: currentPlaybackSpeed') < 2:
+              raise SystemExit('未能唯一定位播放切换倍速回退逻辑。')
 
-          if old_transition in text:
-              text = text.replace(old_transition, new_transition, 1)
-          elif '-> storedPlaybackSpeed ?: currentPlaybackSpeed' not in text:
-              pattern = re.compile(
-                  r'''        Player\.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,\n\s*-> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed\n\n\s*Player\.MEDIA_ITEM_TRANSITION_REASON_REPEAT,\n\s*-> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed\n\n\s*else -> storedPlaybackSpeed \?: playerPreferences\.defaultPlaybackSpeed'''
-              )
-              text, count = pattern.subn(
-                  '''        Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-                  Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-                  -> storedPlaybackSpeed ?: currentPlaybackSpeed
+          command_start = text.find('CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {')
+          command_end = text.find('CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {', command_start)
+          if command_start < 0 or command_end < 0:
+              raise SystemExit('未找到持久倍速命令代码块。')
 
-                  else -> storedPlaybackSpeed ?: currentPlaybackSpeed''',
-                  text,
-                  count=1,
-              )
-              if count != 1:
-                  raise SystemExit(f'倍速切换回退逻辑期望修改 1 处，实际修改 {count} 处。')
-
-          persistent_pattern = re.compile(
-              r'''(CustomCommands\.SET_PERSISTENT_PLAYBACK_SPEED -> \{\n\s*val playbackSpeed = args\.getFloat\(CustomCommands\.PLAYBACK_SPEED_KEY\)\n\s*val player = mediaSession\?\.player\n\s*\?: return@future SessionResult\(SessionError\.ERROR_BAD_VALUE\)\n\s*val currentMediaItem = player\.currentMediaItem\n\s*\?: return@future SessionResult\(SessionError\.ERROR_BAD_VALUE\)\n\n\s*player\.setPlaybackSpeed\(playbackSpeed\)\n)\s*serviceScope\.launch \{\n\s*val playbackStateUri = playbackStateCoordinator\.resolvePlaybackStateUri\(currentMediaItem\)\n\s*mediaRepository\.updateMediumPlaybackSpeed\(\n\s*uri = playbackStateUri,\n\s*playbackSpeed = playbackSpeed,\n\s*\)\n\s*\}\n'''
+          command = text[command_start:command_end]
+          launch_pattern = re.compile(
+              r'''\s*serviceScope\.launch \{\n\s*val playbackStateUri = playbackStateCoordinator\.resolvePlaybackStateUri\(currentMediaItem\)\n\s*mediaRepository\.updateMediumPlaybackSpeed\(\n\s*uri = playbackStateUri,\n\s*playbackSpeed = playbackSpeed,\n\s*\)\n\s*\}\n'''
           )
-          replacement = r'''\1                    val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
+          direct_write = '''
+                      val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
                       mediaRepository.updateMediumPlaybackSpeed(
                           uri = playbackStateUri,
                           playbackSpeed = playbackSpeed,
                       )
 '''
-          text, count = persistent_pattern.subn(replacement, text, count=1)
-          if count == 0:
-              block_start = text.find('CustomCommands.SET_PERSISTENT_PLAYBACK_SPEED -> {')
-              block_end = text.find('CustomCommands.SET_TRANSIENT_PLAYBACK_SPEED -> {', block_start)
-              if block_start < 0 or block_end < 0:
-                  raise SystemExit('未找到持久倍速命令代码块。')
-              block = text[block_start:block_end]
-              if 'serviceScope.launch {' in block:
-                  raise SystemExit('持久倍速保存仍包含异步 launch，但自动定位未成功。')
-              if 'mediaRepository.updateMediumPlaybackSpeed(' not in block:
+          command, launch_count = launch_pattern.subn(direct_write, command, count=1)
+          if launch_count == 0:
+              if 'serviceScope.launch {' in command:
+                  raise SystemExit('持久倍速保存仍为异步写入，但自动替换未成功。')
+              if 'mediaRepository.updateMediumPlaybackSpeed(' not in command:
                   raise SystemExit('持久倍速命令缺少数据库写入。')
 
+          text = text[:command_start] + command + text[command_end:]
           path.write_text(text, encoding='utf-8')
-          print('倍速保存与切换回退已修正。')
+          print('已消除倍速保存竞态，并修正无独立记录时的切换回退。')
           PY
 
-      - name: 删除重复发行工作流
+      - name: 恢复正式测试发布链并删除重复发行工作流
         shell: bash
         run: |
+          git checkout 23ce56838ad14e19073726045cda88e86e6d9d24 -- .github/workflows/test.yaml
           rm -f .github/workflows/release-1.0.146.yml
-          echo '已移除与正式 publish.yaml 重复的发行工作流。'
+          echo '已恢复正式 test.yaml + publish.yaml 发布结构，并移除重复发行工作流。'
 
       - name: 格式化、测试并编译 Debug APK
         shell: bash
@@ -117,7 +103,7 @@ jobs:
       - name: 审查修改范围
         shell: bash
         run: |
-          allowed='^(feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt|\.github/workflows/release-1.0.146.yml|\.github/workflows/finalize-speed-release.yml)$'
+          allowed='^(feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt|\.github/workflows/test.yaml|\.github/workflows/release-1.0.146.yml|\.github/workflows/finalize-speed-release.yml)$'
           unexpected=$(git diff --name-only | grep -v -E "$allowed" || true)
           if [ -n "$unexpected" ]; then
             echo '发现超出允许范围的修改文件：'
