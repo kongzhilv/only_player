@@ -1,0 +1,158 @@
+name: 确保并审查 1.0.146 正式发布
+
+run-name: 确保并审查 1.0.146 正式发布
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ensure-release-1.0.146
+  cancel-in-progress: false
+
+jobs:
+  ensure-release:
+    name: 清理临时文件、触发发布并回报结果
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出主分支
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 记录已有发布运行
+        id: baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id=$(gh run list --workflow publish.yaml --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "开始前最新发布运行 ID：${run_id}"
+
+      - name: 先清理一次性发布审查工作流
+        shell: bash
+        run: |
+          rm -f .github/workflows/ensure-release-1.0.146.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/ensure-release-1.0.146.yml
+          git commit -m 'CI：清理 1.0.146 一次性发布审查工作流'
+          git push origin HEAD:main
+          echo '主分支已恢复干净状态。'
+
+      - name: 等待自动发布任务出现
+        shell: bash
+        run: sleep 90
+
+      - name: 选择或触发正式发布运行
+        id: release-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          baseline='${{ steps.baseline.outputs.run_id }}'
+          latest=$(gh run list --workflow publish.yaml --limit 1 --json databaseId,status,conclusion --jq '.[0] // {}')
+          run_id=$(printf '%s' "$latest" | jq -r '.databaseId // 0')
+          status=$(printf '%s' "$latest" | jq -r '.status // ""')
+
+          if [ "$run_id" = '0' ] || { [ "$run_id" = "$baseline" ] && [ "$status" = 'completed' ]; }; then
+            echo '未发现新的正式发布运行，现直接触发 publish.yaml。'
+            gh workflow run publish.yaml --ref main -f version='1.0.146' -f create_release=true
+            sleep 15
+            run_id=$(gh run list --workflow publish.yaml --branch main --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+          else
+            echo "发现新的正式发布运行：${run_id}"
+          fi
+
+          if [ "$run_id" = '0' ]; then
+            echo '::error::触发后仍未找到正式发布运行。'
+            exit 1
+          fi
+
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "将跟踪正式发布运行：${run_id}"
+
+      - name: 等待正式发布结束
+        id: wait
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id='${{ steps.release-run.outputs.run_id }}'
+          conclusion=''
+          url=''
+
+          for attempt in $(seq 1 60); do
+            data=$(gh run view "$run_id" --json status,conclusion,url)
+            status=$(printf '%s' "$data" | jq -r '.status')
+            conclusion=$(printf '%s' "$data" | jq -r '.conclusion // ""')
+            url=$(printf '%s' "$data" | jq -r '.url')
+            echo "第 ${attempt} 次检查：status=${status} conclusion=${conclusion:-等待中}"
+            if [ "$status" = 'completed' ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          echo "conclusion=${conclusion}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          if [ -z "$conclusion" ]; then
+            echo '::error::正式发布在等待时限内仍未结束。'
+            exit 1
+          fi
+
+      - name: 生成发布审查报告
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          run_id='${{ steps.release-run.outputs.run_id }}'
+          conclusion='${{ steps.wait.outputs.conclusion }}'
+          run_url='${{ steps.wait.outputs.url }}'
+          report="${RUNNER_TEMP}/release-report.md"
+
+          {
+            echo '## Only Player v1.0.146 发布审查结果'
+            echo
+            echo "- 正式发布运行：${run_url:-未取得链接}"
+            echo "- 运行 ID：${run_id:-未知}"
+            echo "- 结论：${conclusion:-监测步骤异常}"
+            echo
+          } > "$report"
+
+          if [ "$conclusion" = 'success' ]; then
+            release_json=$(gh release view v1.0.146 --json tagName,url,assets 2>/dev/null || echo '{}')
+            arm64=$(printf '%s' "$release_json" | jq '[.assets[]? | select(.name | contains("arm64-v8a"))] | length')
+            x64=$(printf '%s' "$release_json" | jq '[.assets[]? | select(.name | contains("x86_64"))] | length')
+            release_url=$(printf '%s' "$release_json" | jq -r '.url // ""')
+            {
+              echo "- Release：${release_url:-未找到}"
+              echo "- arm64-v8a APK：$([ "$arm64" -gt 0 ] && echo '存在' || echo '缺失')"
+              echo "- x86_64 APK：$([ "$x64" -gt 0 ] && echo '存在' || echo '缺失')"
+            } >> "$report"
+          else
+            echo '### 失败日志末尾' >> "$report"
+            echo '```text' >> "$report"
+            gh run view "$run_id" --log-failed 2>&1 | tail -n 160 >> "$report" || true
+            echo '```' >> "$report"
+          fi
+
+          gh pr comment 2 --body-file "$report"
+          cat "$report"
+
+      - name: 确认发布成功
+        if: steps.wait.outputs.conclusion != 'success'
+        shell: bash
+        run: |
+          echo '::error::v1.0.146 正式发布尚未成功，详细失败日志已写入 PR #2 评论。'
+          exit 1
