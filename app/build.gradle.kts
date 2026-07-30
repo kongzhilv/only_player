@@ -79,56 +79,68 @@ android {
 
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes.add("/META-INF/{AL2.0,LGPL2.1}")
         }
+
+        jniLibs {
+            keepDebugSymbols += listOf("**/*.so")
+        }
+    }
+
+    dependenciesInfo {
+        // 构建 APK 时关闭依赖元数据写入
+        includeInApk = false
+        // 构建 Android App Bundle 时关闭依赖元数据写入
+        includeInBundle = false
     }
 }
 
 dependencies {
+
     implementation(project(":core:common"))
     implementation(project(":core:data"))
-    implementation(project(":core:database"))
-    implementation(project(":core:datastore"))
-    implementation(project(":core:domain"))
     implementation(project(":core:media"))
     implementation(project(":core:model"))
+    implementation(project(":core:datastore"))
     implementation(project(":core:ui"))
+    implementation(project(":feature:videopicker"))
     implementation(project(":feature:player"))
     implementation(project(":feature:settings"))
-    implementation(project(":feature:videopicker"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.core.splashscreen)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.runtimeCompose)
-    implementation(libs.androidx.navigation.compose)
 
+    // Compose 依赖
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.iconsExtended)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtimeCompose)
 
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+    implementation(libs.miuix.blur)
+
+    implementation(libs.google.android.material)
+    implementation(libs.androidx.core.splashscreen)
 
     implementation(libs.coil.compose)
-    implementation(libs.coil.network.okhttp)
 
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
+    // Hilt 依赖
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    ksp(libs.kotlin.metadata.jvm)
+    implementation(libs.androidx.hilt.navigation.compose)
 
-    implementation(libs.androidx.media3.exoplayer)
-    implementation(libs.androidx.media3.exoplayer.dash)
-    implementation(libs.androidx.media3.exoplayer.hls)
-    implementation(libs.androidx.media3.exoplayer.rtsp)
-    implementation(libs.androidx.media3.session)
-    implementation(libs.androidx.media3.ui)
-
-    implementation(libs.miuix.ui)
-    implementation(libs.miuix.icons)
-    implementation(libs.miuix.preference)
+    implementation(libs.github.anilbeesetti.nextlib.mediainfo)
+    implementation(libs.commons.net)
+    implementation(libs.okhttp)
+    implementation(libs.smbj)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.media3.session)
+    debugImplementation(libs.kotlinx.coroutines.android)
+    debugImplementation(libs.kotlinx.coroutines.guava)
 }
