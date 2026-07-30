@@ -20,7 +20,7 @@ class AppUpdateChecker @Inject constructor() {
     companion object {
         private const val TAG = "AppUpdateChecker"
         private const val RELEASES_URL =
-            "https://api.github.com/repos/Kindness-Kismet/only_player/releases/latest"
+            "https://api.github.com/repos/kongzhilv/only_player/releases/latest"
     }
 
     suspend fun checkForUpdate(currentVersion: String): AppUpdateInfo? = withContext(Dispatchers.IO) {
