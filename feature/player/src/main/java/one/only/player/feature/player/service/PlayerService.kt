@@ -291,12 +291,10 @@ class PlayerService : MediaSessionService() {
         -> currentPlaybackSpeed
 
         Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
-
         Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
-        -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+        -> storedPlaybackSpeed ?: currentPlaybackSpeed
 
-        else -> storedPlaybackSpeed ?: playerPreferences.defaultPlaybackSpeed
+        else -> storedPlaybackSpeed ?: currentPlaybackSpeed
     }
 
     private fun Player.persistedPlaybackSpeedOrDefault(): Float = currentMediaItem?.mediaMetadata?.playbackSpeed ?: playerPreferences.defaultPlaybackSpeed
@@ -1458,15 +1456,13 @@ class PlayerService : MediaSessionService() {
                         ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
                     val currentMediaItem = player.currentMediaItem
                         ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                    val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
 
+                    mediaRepository.updateMediumPlaybackSpeed(
+                        uri = playbackStateUri,
+                        playbackSpeed = playbackSpeed,
+                    )
                     player.setPlaybackSpeed(playbackSpeed)
-                    serviceScope.launch {
-                        val playbackStateUri = playbackStateCoordinator.resolvePlaybackStateUri(currentMediaItem)
-                        mediaRepository.updateMediumPlaybackSpeed(
-                            uri = playbackStateUri,
-                            playbackSpeed = playbackSpeed,
-                        )
-                    }
                     player.replaceMediaItem(
                         player.currentMediaItemIndex,
                         currentMediaItem.copy(playbackSpeed = playbackSpeed),
