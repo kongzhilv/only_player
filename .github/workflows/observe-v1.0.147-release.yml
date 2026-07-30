@@ -126,23 +126,18 @@ jobs:
           fi
 
           release_url=$(jq -r '.url' /tmp/release.json)
-          assets=$(jq -r '.assets[].name' /tmp/release.json | sed 's/^/- `/' | sed 's/$/`/')
+          assets=$(jq -r '.assets[].name' /tmp/release.json | sed 's/^/- /')
 
-          body=$(cat <<EOF
-          ## v${version} 正式发行成功
-
-          - Release：${release_url}
-          - 应用 ID：`io.github.kongzhilv.onlyplayer`
-          - versionCode：`148`
-          - 长期签名 SHA-256：`${expected}`
-
-          ### 已核验资产
-
-          ${assets}
-
-          两个架构 APK、哈希清单、签名指纹与公开证书均已存在，Release 指纹与长期签名一致。
-          EOF
-          )
+          body="## v${version} 正式发行成功"
+          body+=$'\n\n- Release：'
+          body+="$release_url"
+          body+=$'\n- 应用 ID：io.github.kongzhilv.onlyplayer'
+          body+=$'\n- versionCode：148'
+          body+=$'\n- 长期签名 SHA-256：'
+          body+="$expected"
+          body+=$'\n\n### 已核验资产\n\n'
+          body+="$assets"
+          body+=$'\n\n两个架构 APK、哈希清单、签名指纹与公开证书均已存在，Release 指纹与长期签名一致。'
 
           gh pr comment "$PR_NUMBER" --repo "$repo" --body "$body"
           gh pr close "$PR_NUMBER" --repo "$repo"
