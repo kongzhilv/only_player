@@ -1,5 +1,7 @@
 name: Android 正式版发布
 
+run-name: Android 正式版发布
+
 on:
   push:
     tags:
