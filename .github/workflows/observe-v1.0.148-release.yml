@@ -18,23 +18,21 @@ concurrency:
 
 jobs:
   observe:
-    name: 跟踪正式构建、Release 与长期签名
+    name: 核验 Release 资产与长期签名
     runs-on: ubuntu-latest
     steps:
-      - name: 定位、跟踪并核验正式发布
+      - name: 轮询并核验正式发行
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: '14'
-          OBSERVER_BRANCH: 'agent/observe-v1.0.148-release'
         shell: bash
         run: |
           set -euo pipefail
 
           repo="$GITHUB_REPOSITORY"
+          pr_number='14'
           version='1.0.148'
           tag="v${version}"
           expected='b216ded82a850a9a55d885b8cbf1b8398bbd13b9c511fc3501f3595af89717b7'
-          run_id=''
 
           normalize() {
             tr -d '[:space:]:-' | tr '[:upper:]' '[:lower:]'
@@ -54,73 +52,41 @@ jobs:
             fingerprint=$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/release.json)
             certificate=$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/release.json)
 
-            if [ "$arm64" -lt 1 ] || [ "$x64" -lt 1 ] || [ "$sums" -lt 1 ] ||
-               [ "$fingerprint" -lt 1 ] || [ "$certificate" -lt 1 ]; then
+            if [ "$arm64" -ne 1 ] || [ "$x64" -ne 1 ] || [ "$sums" -ne 1 ] ||
+               [ "$fingerprint" -ne 1 ] || [ "$certificate" -ne 1 ]; then
               return 1
             fi
 
             gh release download "$tag" --repo "$repo" \
               --pattern 'SHA256-CERT-FINGERPRINT.txt' \
               --dir /tmp/release-check \
-              --clobber
+              --clobber >/dev/null
 
             published=$(normalize </tmp/release-check/SHA256-CERT-FINGERPRINT.txt)
             [ "$published" = "$expected" ]
           }
 
-          workflow_id=$(gh api "repos/${repo}/actions/workflows" \
-            --jq '.workflows[] | select(.path == ".github/workflows/publish.yaml") | .id' |
-            head -n 1)
+          gh pr comment "$pr_number" --repo "$repo" --body "v${version} 最终发行核验已启动：正在检查双架构 APK、哈希清单、公开证书和长期签名。"
 
-          if [ -z "$workflow_id" ]; then
-            echo '::error::没有找到 publish.yaml 工作流'
-            exit 1
-          fi
+          if ! verify_release; then
+            workflow_id=$(gh api "repos/${repo}/actions/workflows" \
+              --jq '.workflows[] | select(.path == ".github/workflows/publish.yaml") | .id' |
+              head -n 1)
 
-          if verify_release; then
-            echo "${tag} 已经完整发布，跳过重复触发。"
-          else
             run_id=$(gh api "repos/${repo}/actions/workflows/${workflow_id}/runs?branch=main&event=workflow_dispatch&per_page=30" \
               --jq ".workflow_runs[] | select(.display_title == \"Android 正式版发布 ${version}\") | .id" |
               head -n 1)
 
             if [ -z "$run_id" ]; then
-              echo "尚未定位到 ${version} 正式运行，主动触发。"
               gh workflow run publish.yaml --repo "$repo" --ref main \
                 -f version="$version" \
                 -f create_release=true
-
-              for attempt in $(seq 1 30); do
-                run_id=$(gh api "repos/${repo}/actions/workflows/${workflow_id}/runs?branch=main&event=workflow_dispatch&per_page=30" \
-                  --jq ".workflow_runs[] | select(.display_title == \"Android 正式版发布 ${version}\") | .id" |
-                  head -n 1)
-                if [ -n "$run_id" ]; then
-                  break
-                fi
-                sleep 5
-              done
+              echo "已补触发 ${version} 正式发布。"
+            else
+              echo "已定位正式发布运行：${run_id}"
             fi
 
-            if [ -z "$run_id" ]; then
-              echo '::error::正式发布已触发，但未取得运行 ID'
-              exit 1
-            fi
-
-            run_url="https://github.com/${repo}/actions/runs/${run_id}"
-            echo "正式运行 ID：${run_id}"
-            echo "正式运行：${run_url}"
-
-            if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 10; then
-              echo '::error::正式发布工作流失败'
-              gh run view "$run_id" --repo "$repo" --log-failed || true
-              gh pr comment "$PR_NUMBER" --repo "$repo" --body "## v${version} 发布失败
-
-- 正式运行：${run_url}
-- 观察工作流已输出失败步骤日志；保留观察器以便继续修复。"
-              exit 1
-            fi
-
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 180); do
               if verify_release; then
                 break
               fi
@@ -129,7 +95,14 @@ jobs:
           fi
 
           if ! verify_release; then
-            echo '::error::正式工作流结束，但 Release 资产或长期签名核验未通过'
+            latest_run=$(gh api "repos/${repo}/actions/workflows/publish.yaml/runs?branch=main&event=workflow_dispatch&per_page=10" \
+              --jq ".workflow_runs[] | select(.display_title == \"Android 正式版发布 ${version}\") | {id,status,conclusion,html_url}" |
+              head -n 1 || true)
+            gh pr comment "$pr_number" --repo "$repo" --body "## v${version} 最终核验失败
+
+15 分钟内未发现资产完整且长期签名正确的 Release。
+
+最新正式运行：${latest_run}"
             exit 1
           fi
 
@@ -152,8 +125,9 @@ jobs:
           EOF
           )
 
-          gh pr comment "$PR_NUMBER" --repo "$repo" --body "$body"
+          gh pr comment "$pr_number" --repo "$repo" --body "$body"
           gh api --method DELETE "repos/${repo}/git/refs/heads/agent/restore-list-last-played-highlight" || true
+          gh api --method DELETE "repos/${repo}/git/refs/heads/agent/observe-v1.0.148-release" || true
 
           workflow_sha=$(gh api "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml?ref=main" --jq '.sha' 2>/dev/null || true)
           if [ -n "$workflow_sha" ]; then
@@ -162,6 +136,3 @@ jobs:
               -f sha="$workflow_sha" \
               -f branch='main'
           fi
-
-          gh api --method DELETE "repos/${repo}/git/refs/heads/${OBSERVER_BRANCH}" || true
-          echo "已清理修复分支、main 观察器文件与观察分支。"
