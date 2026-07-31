@@ -1,14 +1,16 @@
-- 修复平板横屏、分屏或较矮窗口中“快捷设置”弹窗底部“取消/确定”按钮被裁掉的问题
-- 限制弹窗整体高度，标题和操作按钮保持可见，中间选项区域在空间不足时滚动
-- 修复同时适用于使用共享 `NextDialog` 的其他长内容弹窗
-- 继续使用独立应用 ID `io.github.kongzhilv.onlyplayer` 和现有长期签名，可从当前长期签名版覆盖升级
+- 恢复本地媒体列表中“上次播放媒体”的主题色高亮
+- 列表模式下，最后播放的视频标题及其路径会使用主题主色
+- 包含最后播放视频的文件夹标题及路径也会使用主题主色
+- 保持原有设置开关“标记上次播放媒体”，关闭后不显示高亮
+- 网格布局和云端媒体原有高亮逻辑保持不变
 
 <details>
 <summary>English Version</summary>
 
-- Fix the Quick Settings dialog clipping its Cancel and Done buttons on tablets in landscape, split-screen, or other short-height windows
-- Constrain the whole dialog to the current window height, keep the title and action buttons visible, and scroll the middle content when space is limited
-- Apply the same protection to other long dialogs built with the shared `NextDialog`
-- Continue using the independent application ID `io.github.kongzhilv.onlyplayer` and the existing long-term signing key for in-place upgrades from the current long-term-signed release
+- Restore theme-color highlighting for the last played item in the local media list
+- In list layout, the last played video title and path now use the primary theme color
+- The folder containing the last played video also highlights its title and path
+- Continue respecting the existing “Mark last played media” preference
+- Keep the existing grid and cloud highlighting behavior unchanged
 
 </details>
