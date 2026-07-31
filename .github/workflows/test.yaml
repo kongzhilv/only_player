@@ -171,3 +171,84 @@ jobs:
         run: |
           version='${{ needs.prepare.outputs.version_name }}'
           gh workflow run publish.yaml --ref main -f version="$version" -f create_release=true
+
+  verify-release-1-0-148:
+    name: 核验 v1.0.148 正式资产与长期签名
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/verify-v1.0.148-via-test'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: 核验 Release 并回写结果
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+          tag='v1.0.148'
+          expected='b216ded82a850a9a55d885b8cbf1b8398bbd13b9c511fc3501f3595af89717b7'
+
+          normalize() {
+            tr -d '[:space:]:-' | tr '[:upper:]' '[:lower:]'
+          }
+
+          verify_release() {
+            rm -rf /tmp/release-check
+            mkdir -p /tmp/release-check
+            gh release view "$tag" --repo "$repo" --json url,tagName,assets >/tmp/release.json 2>/dev/null || return 1
+
+            [ "$(jq '[.assets[] | select(.name | contains("arm64-v8a") and endswith(".apk"))] | length' /tmp/release.json)" -eq 1 ] || return 1
+            [ "$(jq '[.assets[] | select(.name | contains("x86_64") and endswith(".apk"))] | length' /tmp/release.json)" -eq 1 ] || return 1
+            [ "$(jq '[.assets[] | select(.name == "SHA256SUMS.txt")] | length' /tmp/release.json)" -eq 1 ] || return 1
+            [ "$(jq '[.assets[] | select(.name == "SHA256-CERT-FINGERPRINT.txt")] | length' /tmp/release.json)" -eq 1 ] || return 1
+            [ "$(jq '[.assets[] | select(.name == "only-player-fork-signing-certificate.pem")] | length' /tmp/release.json)" -eq 1 ] || return 1
+
+            gh release download "$tag" --repo "$repo" \
+              --pattern 'SHA256-CERT-FINGERPRINT.txt' \
+              --dir /tmp/release-check --clobber >/dev/null
+            published=$(normalize </tmp/release-check/SHA256-CERT-FINGERPRINT.txt)
+            [ "$published" = "$expected" ]
+          }
+
+          for attempt in $(seq 1 60); do
+            if verify_release; then
+              break
+            fi
+            sleep 5
+          done
+
+          if ! verify_release; then
+            gh pr comment "$PR_NUMBER" --repo "$repo" --body 'v1.0.148 Release 最终核验失败：资产不完整或长期签名指纹不一致。'
+            exit 1
+          fi
+
+          release_url=$(jq -r '.url' /tmp/release.json)
+          assets=$(jq -r '.assets[].name' /tmp/release.json | sed 's/^/- /')
+          body=$(cat <<EOF
+          ## v1.0.148 正式发行成功
+
+          - Release：${release_url}
+          - 应用 ID：io.github.kongzhilv.onlyplayer
+          - versionCode：149
+          - 长期签名 SHA-256：${expected}
+
+          ### 已核验资产
+
+          ${assets}
+
+          双架构 APK、哈希清单、证书指纹与公开证书均已存在，签名与长期密钥一致。
+          EOF
+          )
+          gh pr comment "$PR_NUMBER" --repo "$repo" --body "$body"
+
+          for branch in \
+            agent/restore-list-last-played-highlight \
+            agent/observe-v1.0.148-release \
+            agent/retrigger-v1.0.148-observer
+          do
+            gh api --method DELETE "repos/${repo}/git/refs/heads/${branch}" || true
+          done
