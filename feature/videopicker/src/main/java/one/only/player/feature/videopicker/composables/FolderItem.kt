@@ -88,6 +88,8 @@ private fun FolderListItem(
     onClick: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
 ) {
+    val shouldHighlight = isRecentlyPlayedFolder && preferences.shouldMarkLastPlayedMedia
+    val highlightColor = MiuixTheme.colorScheme.primary
     NextSegmentedListItem(
         modifier = modifier.testTag("item_folder_${folder.name}"),
         isSelected = false,
@@ -130,6 +132,7 @@ private fun FolderListItem(
                 text = folder.name,
                 maxLines = 2,
                 style = MiuixTheme.textStyles.title4,
+                color = if (shouldHighlight) highlightColor else MiuixTheme.colorScheme.onSurface,
                 overflow = TextOverflow.Ellipsis,
             )
         },
@@ -142,6 +145,7 @@ private fun FolderListItem(
                         text = folder.path.substringBeforeLast("/"),
                         maxLines = 2,
                         style = MiuixTheme.textStyles.body2,
+                        color = if (shouldHighlight) highlightColor else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
