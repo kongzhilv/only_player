@@ -1,5 +1,6 @@
 name: 核验 1.0.148 正式发布
 
+# 通过 PR 合并重新触发，确保默认分支上的 push 事件能识别本工作流。
 on:
   push:
     branches: [ main ]
@@ -128,6 +129,7 @@ jobs:
           gh pr comment "$pr_number" --repo "$repo" --body "$body"
           gh api --method DELETE "repos/${repo}/git/refs/heads/agent/restore-list-last-played-highlight" || true
           gh api --method DELETE "repos/${repo}/git/refs/heads/agent/observe-v1.0.148-release" || true
+          gh api --method DELETE "repos/${repo}/git/refs/heads/agent/retrigger-v1.0.148-observer" || true
 
           workflow_sha=$(gh api "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml?ref=main" --jq '.sha' 2>/dev/null || true)
           if [ -n "$workflow_sha" ]; then
