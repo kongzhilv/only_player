@@ -12,6 +12,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: observe-v1.0.148-release
+  cancel-in-progress: true
+
 jobs:
   observe:
     name: 跟踪正式构建、Release 与长期签名
@@ -116,7 +120,7 @@ jobs:
               exit 1
             fi
 
-            for attempt in $(seq 1 30); do
+            for attempt in $(seq 1 60); do
               if verify_release; then
                 break
               fi
@@ -151,11 +155,13 @@ jobs:
           gh pr comment "$PR_NUMBER" --repo "$repo" --body "$body"
           gh api --method DELETE "repos/${repo}/git/refs/heads/agent/restore-list-last-played-highlight" || true
 
-          workflow_sha=$(gh api "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml?ref=main" --jq '.sha')
-          gh api --method DELETE "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml" \
-            -f message='CI：清理 v1.0.148 一次性发行观察器' \
-            -f sha="$workflow_sha" \
-            -f branch='main'
+          workflow_sha=$(gh api "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml?ref=main" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$workflow_sha" ]; then
+            gh api --method DELETE "repos/${repo}/contents/.github/workflows/observe-v1.0.148-release.yml" \
+              -f message='CI：清理 v1.0.148 一次性发行观察器' \
+              -f sha="$workflow_sha" \
+              -f branch='main'
+          fi
 
           gh api --method DELETE "repos/${repo}/git/refs/heads/${OBSERVER_BRANCH}" || true
           echo "已清理修复分支、main 观察器文件与观察分支。"
