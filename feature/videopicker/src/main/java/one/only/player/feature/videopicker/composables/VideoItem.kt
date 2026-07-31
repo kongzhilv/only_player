@@ -95,6 +95,8 @@ private fun VideoListItem(
     onClick: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
 ) {
+    val shouldHighlight = isRecentlyPlayedVideo && preferences.shouldMarkLastPlayedMedia
+    val highlightColor = MiuixTheme.colorScheme.primary
     NextSegmentedListItem(
         modifier = modifier.testTag("item_video_${video.displayName}"),
         isSelected = false,
@@ -120,6 +122,7 @@ private fun VideoListItem(
                 text = if (preferences.shouldShowExtensionField) video.nameWithExtension else video.displayName,
                 maxLines = 2,
                 style = MiuixTheme.textStyles.title4,
+                color = if (shouldHighlight) highlightColor else MiuixTheme.colorScheme.onSurface,
                 overflow = TextOverflow.Ellipsis,
             )
         },
@@ -132,6 +135,7 @@ private fun VideoListItem(
                         text = video.path.substringBeforeLast("/"),
                         maxLines = 2,
                         style = MiuixTheme.textStyles.body2,
+                        color = if (shouldHighlight) highlightColor else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
