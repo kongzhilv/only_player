@@ -1708,6 +1708,28 @@ class PlayerService : MediaSessionService() {
                     mediaSession?.player?.updatePauseAtEndOfMediaItems(preferences)
                 }
         }
+        serviceScope.launch {
+            preferencesRepository.playerPreferences
+                .distinctUntilChanged { old, new ->
+                    old.shouldRequireAudioFocus == new.shouldRequireAudioFocus &&
+                        old.shouldPauseOnHeadsetDisconnect == new.shouldPauseOnHeadsetDisconnect
+                }
+                .collect { preferences ->
+                    val player = mediaSession?.player as? ExoPlayer ?: return@collect
+                    player.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(C.USAGE_MEDIA)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                            .build(),
+                        preferences.shouldRequireAudioFocus,
+                    )
+                    player.setHandleAudioBecomingNoisy(preferences.shouldPauseOnHeadsetDisconnect)
+                    Logger.info(
+                        TAG,
+                        "Applied audio behavior requireFocus=${preferences.shouldRequireAudioFocus} pauseOnHeadsetDisconnect=${preferences.shouldPauseOnHeadsetDisconnect}",
+                    )
+                }
+        }
         audioEffectsCoordinator.applyVolumeNormalization(playerPreferences.isVolumeNormalizationEnabled)
         val assHandler = AssHandler(renderType = resolveAssRenderType())
         this.assHandler = assHandler
