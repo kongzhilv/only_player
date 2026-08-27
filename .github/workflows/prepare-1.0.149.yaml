@@ -1,0 +1,119 @@
+name: Prepare 1.0.149 release bump
+
+on:
+  push:
+    branches:
+      - release/1.0.149
+    paths:
+      - '.github/workflows/prepare-1.0.149.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v6
+        with:
+          ref: release/1.0.149
+          fetch-depth: 0
+
+      - name: Configure JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          validate-wrappers: true
+          cache-cleanup: on-success
+
+      - name: Update version catalog and preserve project aliases
+        shell: bash
+        run: |
+          cp gradle/libs.versions.toml /tmp/libs.versions.before.toml
+          ./gradlew versionCatalogUpdate
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('gradle/libs.versions.toml')
+          text = path.read_text()
+          before = Path('/tmp/libs.versions.before.toml').read_text()
+          required = [
+              'android-compileSdk',
+              'android-targetSdk',
+              'android-minSdk',
+              'android-jvm',
+          ]
+          missing = [key for key in required if not re.search(rf'^{re.escape(key)}\s*=\s*"[^"]+"$', text, re.M)]
+          if missing:
+              lines = []
+              for key in missing:
+                  match = re.search(rf'^{re.escape(key)}\s*=\s*"[^"]+"$', before, re.M)
+                  if not match:
+                      raise SystemExit(f'Missing required custom version alias in both catalogs: {key}')
+                  lines.append(match.group(0))
+              marker = '[versions]\n'
+              if marker not in text:
+                  raise SystemExit('Missing [versions] section')
+              text = text.replace(marker, marker + '\n'.join(lines) + '\n', 1)
+              path.write_text(text)
+
+          for key in required:
+              if not re.search(rf'^{re.escape(key)}\s*=\s*"[^"]+"$', path.read_text(), re.M):
+                  raise SystemExit(f'Required custom version alias still missing: {key}')
+          PY
+          git diff --check
+
+      - name: Bump app version and overwrite changelog
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          gradle = Path('app/build.gradle.kts')
+          text = gradle.read_text()
+          replacements = {
+              'versionCode = 149': 'versionCode = 150',
+              'versionName = "1.0.148"': 'versionName = "1.0.149"',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected exactly one occurrence of {old!r}, found {text.count(old)}')
+              text = text.replace(old, new)
+          gradle.write_text(text)
+
+          changelog = '''- 修复“获取音频焦点”和“拔出耳机时暂停”在播放器已运行时不会即时生效的问题
+- 关闭“获取音频焦点”后可立即与网易云音乐等其他媒体应用同时播放，无需重启播放器
+
+<details>
+<summary>English Version</summary>
+
+- Fix audio focus and headset-disconnect preferences not taking effect while the player service is already running
+- Allow immediate simultaneous playback with NetEase Cloud Music and other media apps after turning off “Request audio focus”, without restarting the player
+
+</details>'''
+          Path('.github/CHANGELOG.md').write_text(changelog)
+          PY
+          git diff --check
+
+      - name: Format and verify release changes
+        shell: bash
+        run: |
+          ./gradlew ktlintFormat ktlintCheck test --warning-mode=fail
+
+      - name: Remove one-shot workflow and commit release bump
+        shell: bash
+        run: |
+          rm .github/workflows/prepare-1.0.149.yaml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'chore: bump version to 1.0.149 and update changelog'
+          git push origin HEAD:release/1.0.149
