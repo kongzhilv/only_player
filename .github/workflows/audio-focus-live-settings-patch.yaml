@@ -39,59 +39,39 @@ jobs:
 
           path = Path('feature/player/src/main/java/one/only/player/feature/player/service/PlayerService.kt')
           text = path.read_text()
-
-          anchor = '''        serviceScope.launch {
-              preferencesRepository.playerPreferences
-                  .distinctUntilChanged { old, new ->
-                      old.shouldAutoPlay == new.shouldAutoPlay &&
-                          old.shouldPauseAtEndOfQueue == new.shouldPauseAtEndOfQueue
-                  }
-                  .collect { preferences ->
-                      mediaSession?.player?.updatePauseAtEndOfMediaItems(preferences)
-                  }
-          }
-          audioEffectsCoordinator.applyVolumeNormalization(playerPreferences.isVolumeNormalizationEnabled)
-          '''
-
-          replacement = '''        serviceScope.launch {
-              preferencesRepository.playerPreferences
-                  .distinctUntilChanged { old, new ->
-                      old.shouldAutoPlay == new.shouldAutoPlay &&
-                          old.shouldPauseAtEndOfQueue == new.shouldPauseAtEndOfQueue
-                  }
-                  .collect { preferences ->
-                      mediaSession?.player?.updatePauseAtEndOfMediaItems(preferences)
-                  }
-          }
-          serviceScope.launch {
-              preferencesRepository.playerPreferences
-                  .distinctUntilChanged { old, new ->
-                      old.shouldRequireAudioFocus == new.shouldRequireAudioFocus &&
-                          old.shouldPauseOnHeadsetDisconnect == new.shouldPauseOnHeadsetDisconnect
-                  }
-                  .collect { preferences ->
-                      val player = mediaSession?.player as? ExoPlayer ?: return@collect
-                      player.setAudioAttributes(
-                          AudioAttributes.Builder()
-                              .setUsage(C.USAGE_MEDIA)
-                              .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                              .build(),
-                          preferences.shouldRequireAudioFocus,
-                      )
-                      player.setHandleAudioBecomingNoisy(preferences.shouldPauseOnHeadsetDisconnect)
-                      Logger.info(
-                          TAG,
-                          "Applied audio behavior requireFocus=${preferences.shouldRequireAudioFocus} pauseOnHeadsetDisconnect=${preferences.shouldPauseOnHeadsetDisconnect}",
-                      )
-                  }
-          }
-          audioEffectsCoordinator.applyVolumeNormalization(playerPreferences.isVolumeNormalizationEnabled)
-          '''
+          anchor = "        audioEffectsCoordinator.applyVolumeNormalization(playerPreferences.isVolumeNormalizationEnabled)\n"
+          lines = [
+              "        serviceScope.launch {",
+              "            preferencesRepository.playerPreferences",
+              "                .distinctUntilChanged { old, new ->",
+              "                    old.shouldRequireAudioFocus == new.shouldRequireAudioFocus &&",
+              "                        old.shouldPauseOnHeadsetDisconnect == new.shouldPauseOnHeadsetDisconnect",
+              "                }",
+              "                .collect { preferences ->",
+              "                    val player = mediaSession?.player as? ExoPlayer ?: return@collect",
+              "                    player.setAudioAttributes(",
+              "                        AudioAttributes.Builder()",
+              "                            .setUsage(C.USAGE_MEDIA)",
+              "                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)",
+              "                            .build(),",
+              "                        preferences.shouldRequireAudioFocus,",
+              "                    )",
+              "                    player.setHandleAudioBecomingNoisy(preferences.shouldPauseOnHeadsetDisconnect)",
+              "                    Logger.info(",
+              "                        TAG,",
+              "                        \"Applied audio behavior requireFocus=${preferences.shouldRequireAudioFocus} pauseOnHeadsetDisconnect=${preferences.shouldPauseOnHeadsetDisconnect}\",",
+              "                    )",
+              "                }",
+              "        }",
+          ]
+          insertion = "\n".join(lines) + "\n" + anchor
 
           if text.count(anchor) != 1:
               raise SystemExit(f'Expected exactly one PlayerService anchor, found {text.count(anchor)}')
+          if 'Applied audio behavior requireFocus=' in text:
+              raise SystemExit('PlayerService patch already present')
 
-          path.write_text(text.replace(anchor, replacement))
+          path.write_text(text.replace(anchor, insertion))
           PY
 
           git diff --check
