@@ -22,8 +22,8 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         applicationId = "io.github.kongzhilv.onlyplayer"
-        versionCode = 150
-        versionName = "1.0.149"
+        versionCode = 151
+        versionName = "1.0.150"
     }
 
     buildFeatures {
