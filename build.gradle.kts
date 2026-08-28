@@ -21,6 +21,8 @@ versionCatalogUpdate {
             "android-jvm",
             "android-minSdk",
             "android-targetSdk",
+            "androidxMedia3",
+            "nextlib",
         )
     }
 }
